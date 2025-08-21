@@ -1,0 +1,6 @@
+121= corriente
+171= voltaje 
+22 =  bateria
+
+voltaje y corriente sale cada 15 segundos y bateria cada 1 por lo que deberia haber 8 mensaje de corriente y voltaje entre  mesajes de bateria, osea cada noveno mensaje
+losde voltaje y bateria var intercalados, primero corriente y luego voltaje y hay 3 segundos  de diferencia aprox entre mensaje y mensaje.

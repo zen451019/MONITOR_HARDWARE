@@ -1,0 +1,4 @@
+# PBC
+
+The printed circuit board (PCB) design is carried out in the PCB editor integrated into KICAD V9.0, where the precise layout of the components on the board surface is performed and the routes of the tracks that connect them electrically are defined. During this process, it was identified that some key components, such as the voltage sensor and the ESP32 microcontroller, did not have pre-designed schematics or footprints in the software library. For this reason, it was necessary to manually create both the schematics and the corresponding footprints for these elements, thus ensuring their correct integration into the design.
+![[placa.svg]]
