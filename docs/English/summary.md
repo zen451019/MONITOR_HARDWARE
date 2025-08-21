@@ -13,4 +13,4 @@ Monitor operating variables in electromechanical systems using dedicated hardwar
 
 In addition to measuring current and voltage in three-phase systems, the module must wirelessly transmit the information using LoRaWAN technology, sending it to a gateway located a few meters or even tens of meters away from the acquisition module. It must also guarantee uninterrupted transmission, requiring autonomous operation capability when the main power supply is deactivated.
 
-### [Electromechanical Variables Monitoring Board — Monitor](monitor_plate)
+### [Electromechanical Variables Monitoring Board — Monitor](./hardware/kicad/monitor_plate.md)

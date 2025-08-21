@@ -7,7 +7,7 @@ Como dispositivo de control central se requiere un microcontrolador con alta cap
 Para acelerar el desarrollo y consolidar en una sola placa las funciones de cómputo, radio y alimentación, se selecciona el módulo/placa TTGO LoRa32 v2.1, basado en el SoC ESP32‑PICO‑D4 e integrado con un transceptor LoRa de la familia SX127x. Esta elección proporciona un entorno listo para prototipado y operación, con conectividad inalámbrica y recursos de E/S suficientes para la adquisición y transmisión de datos del sistema.
 
 
-<p style="text-align:center;"> <img src="ttgo_lora32.png" style="width:50%;"> </p>
+<p style="text-align:center;"> <img src="../../res/img/hardware/ttgo_lora32.png" style="width:50%;"> </p>
 
 ### Capacidades del SoC ESP32 PICO D4
 

@@ -13,4 +13,4 @@ Monitorear variables de operación en sistemas electromecánicos mediante hardwa
 
 El módulo, además de medir corriente y tensión en sistemas trifásicos, debe transmitir la información de forma inalámbrica mediante tecnología LoRaWAN, enviándola a un gateway ubicado a pocos metros o a decenas de metros del módulo de adquisición. Asimismo, debe garantizar transmisión ininterrumpida, por lo que requiere capacidad de operación autónoma cuando la fuente de alimentación principal esté desactivada.
 
-### [Placa de monitoreo de variables electromecánicas Monitor](Placa_Monitor)
+### [Placa de monitoreo de variables electromecánicas Monitor](./hardware/kicad/Placa_Monitor.md)

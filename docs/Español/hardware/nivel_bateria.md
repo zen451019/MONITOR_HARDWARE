@@ -4,8 +4,8 @@ La batería de un sistema electromecánico cumple el papel de fuente de energía
 
 ## Acondicionar señal
 
-La señal de una batería es de corriente continua (DC) y, debido a su nivel de voltaje, el [ESP32](controlador_central) no puede monitorearla directamente. Por ello, se implementa un divisor de voltaje que reduce la señal a un rango seguro para el microcontrolador, manteniendo su representatividad respecto al nivel real de la batería.
-<p style="text-align:center;"> <img src="divisor.drawio.svg" style="width:50%;"> </p>
+La señal de una batería es de corriente continua (DC) y, debido a su nivel de voltaje, el [ESP32](./controlador_central.md) no puede monitorearla directamente. Por ello, se implementa un divisor de voltaje que reduce la señal a un rango seguro para el microcontrolador, manteniendo su representatividad respecto al nivel real de la batería.
+<p style="text-align:center;"> <img src="../../res/img/hardware/divisor.drawio.svg" style="width:50%;"> </p>
 
 $$
 V_{out} = V_{in} \frac{ R_2 }{R_1 + R_2}
@@ -27,5 +27,5 @@ $$
 
 Este divisor de voltaje adapta el rango de 0 V a 15.3 V a un rango seguro de 0 V a 3.3 V para la lectura del microcontrolador. Posteriormente, el valor real se escala mediante software.
 
-<p style="text-align:center;"> <img src="divisor_bateria.drawio.svg" style="width:50%;"> </p>
+<p style="text-align:center;"> <img src="../../res/img/hardware/divisor_bateria.drawio.svg" style="width:50%;"> </p>
 

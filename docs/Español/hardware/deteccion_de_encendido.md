@@ -8,6 +8,6 @@ La señal a monitorear será la presencia o ausencia de voltaje DC, proveniente 
 
 Para que el microcontrolador capte estas señales de forma segura, dadas las diferencias de nivel de voltaje, se utiliza un level shifter con optoacoplador, proporcionando adaptación de niveles y aislamiento galvánico.
 
-<p style="text-align:center;"> <img src="level_shifter.drawio.svg" style="width:50%;"> </p>
+<p style="text-align:center;"> <img src="../../res/img/hardware/level_shifter.drawio.svg" style="width:50%;"> </p>
 
-Cada vez que llega una señal digital, el optoacoplador activa su diodo, lo que a su vez enciende el fototransistor. Esto permite que el pin del [ESP32](controlador_central) caiga a GND. Para una detección correcta, el pin del ESP32 debe configurarse como una entrada con pull-up.
+Cada vez que llega una señal digital, el optoacoplador activa su diodo, lo que a su vez enciende el fototransistor. Esto permite que el pin del [ESP32](./controlador_central) caiga a GND. Para una detección correcta, el pin del ESP32 debe configurarse como una entrada con pull-up.

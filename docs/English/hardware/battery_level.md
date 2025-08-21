@@ -4,8 +4,9 @@ The battery in an electromechanical system acts as a primary or backup power sou
 
 ## ## Signal Conditioning
 
-The battery signal is direct current (DC) and, due to its voltage level, the [ESP32](central_controller) cannot monitor it directly. Therefore, a voltage divider is implemented that reduces the signal to a safe range for the microcontroller, while maintaining its representativeness with respect to the actual battery level.
-<p style="text-align:center;"> <img src="divisor.drawio.svg" style="width:50%;"> </p>
+The battery signal is direct current (DC) and, due to its voltage level, the [ESP32](./central_controller.md) cannot monitor it directly. Therefore, a voltage divider is implemented that reduces the signal to a safe range for the microcontroller, while maintaining its representativeness with respect to the actual battery level.
+
+<p style="text-align:center;"> <img src="../../res/img/hardware/divisor.drawio.svg" style="width:50%;"> </p>
 
 $$
 V_{out} = V_{in} \frac{ R_2 }{R_1 + R_2}
@@ -27,5 +28,5 @@ $$
 
 This voltage divider adapts the range from 0 V to 15.3 V to a safe range from 0 V to 3.3 V for microcontroller reading. The actual value is then scaled using software.
 
-<p style="text-align:center;"> <img src="divisor_bateria.drawio.svg" style="width:50%;"> </p>
+<p style="text-align:center;"> <img src="../../res/img/hardware/divisor_bateria.drawio.svg" style="width:50%;"> </p>
 

@@ -7,7 +7,7 @@ A microcontroller with high computing power, multiple input/output interfaces, i
 To accelerate development and consolidate computing, radio, and power functions onto a single board, the TTGO LoRa32 v2.1 module/board is selected, based on the ESP32‑PICO‑D4 SoC and integrated with an SX127x family LoRa transceiver. This choice provides a ready-to-prototype and ready-to-operate environment, with wireless connectivity and sufficient I/O resources for system data acquisition and transmission.
 
 
-<p style="text-align:center;"> <img src="ttgo_lora32.png" style="width:50%;"> </p>
+<p style="text-align:center;"> <img src="../../res/img/hardware/ttgo_lora32.png" style="width:50%;"> </p>
 
 ### SoC ESP32 PICO D4 Capabilities
 
