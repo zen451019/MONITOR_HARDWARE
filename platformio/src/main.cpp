@@ -1,9 +1,38 @@
 #include <Arduino.h>
+/*
+ * File: main.cpp
+ * Summary: Reads analog signals from multiple pins on an ESP32, computes RMS,
+ *          applies EMA filtering, packages results and sends them over LoRaWAN.
+ *          Also measures battery level and detects system on/off via MONITOR_PIN.
+ *
+ * Main components:
+ *  - ISR: onADCTimer (ADC sampling)
+ *  - FreeRTOS tasks: TaskProcesamiento, TaskRegistroResultados,
+ *      TaskBatteryLevel, TaskDisplay, TaskMonitorPin, tareaLoRa
+ *  - Encoding: codificarYFragmentar, codificarYFragmentarBattery
+ *  - Helpers: applyEMA*, calculateRMS_fifo
+ *
+ * I/O / HW:
+ *  - ADC pins configured in `pin_configs`
+ *  - MONITOR_PIN: input to enable/disable the system
+ *  - OLED I2C @ 0x3C
+ *
+ * Dependencies: ESP32AnalogRead, MCCI LMIC (lmic.h), Adafruit_SSD1306, FreeRTOS
+ * Build: PlatformIO (ESP32)
+ *
+ * Notes:
+ *  - EMA functions are kept for later tuning.
+ *  - Check the /backups folder if you want to consolidate older versions.
+ *
+ * Author: Manuel Felipe Ospina    Date: 2025-08-22
+ */
 
+// Display
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
+// ADC, math, RTOS, LoRa
 #include <ESP32AnalogRead.h>
 #include <math.h>
 #include <vector>
@@ -12,25 +41,21 @@
 #include <hal/hal.h>
 #include <SPI.h>
 
-// ==================== PARÁMETROS DEL PANTALLA ====================
+// ==================== DEFINES / PARÁMETROS ====================
+// Parámetros del display
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1  // El pin reset no está conectado en el TTGO
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// ==================== PARÁMETROS DEL PIN_ACTIVACIÒN ====================
 #define MONITOR_PIN 35
 volatile bool sistema_habilitado = false;
 
+// ==================== PARÁMETROS DEL PIN_ACTIVACIÒN ====================
 
 // ==================== PARÁMETROS DEL SISTEMA ====================
-// Permite configurar desde build flags, por ejemplo en platformio.ini:
-// build_flags = -DFS_HZ=1000 -DWINDOW_MS=300 -DEMA_ALPHA=0.3 -DPROCESS_PERIOD_MS=300
 #ifndef FS_HZ
 #define FS_HZ 960
-#endif
-#ifndef WINDOW_MS
-#define WINDOW_MS 16*15
 #endif
 #ifndef EMA_ALPHA
 #define EMA_ALPHA 0.08f
@@ -39,14 +64,10 @@ volatile bool sistema_habilitado = false;
 #define PROCESS_PERIOD_MS 300
 #endif
 
-const int SAMPLING_FREQUENCY = FS_HZ; // Hz
-const int BUFFER_SIZE = (FS_HZ * WINDOW_MS) / 1000; // muestras por ventana
 #define NUM_PINES 4
 #define RESULTADOS_POR_BLOQUE 50
-#define RMS_SCALE 10
 
 #define LORA_PAYLOAD_MAX 180 // Payload máximo para DR3
-
 
 // ==================== REGISTRO PARA LCD ====================
 #define NUM_EVENTOS_LCD 3
@@ -77,7 +98,7 @@ volatile int index_bateria = 0;
 uint8_t id_serie_bateria = 0;
 SemaphoreHandle_t mutex_bateria;
 
-
+// ==================== ESTRUCTURAS DE DATOS ====================
 typedef struct {
     int pin;
     float gain;
@@ -89,25 +110,15 @@ typedef struct {
 } PinConfig;
 
 typedef struct {
-  PinConfig *pins;
-  int num_pins;
-  volatile bool acquisition_complete;
-  SemaphoreHandle_t semaforo;
-  TaskHandle_t taskHandle;
-  unsigned long sequence_time_us;
-} MultiPinSystem;
-
-typedef struct {
-  unsigned long timestamp;
-  float valores[NUM_PINES];
+    unsigned long timestamp;
+    float valores[NUM_PINES];
 } ResultadoRMS;
 
 typedef struct {
-  ResultadoRMS bloque[RESULTADOS_POR_BLOQUE];
-  volatile int index;
-  SemaphoreHandle_t mutex;
+    ResultadoRMS bloque[RESULTADOS_POR_BLOQUE];
+    volatile int index;
+    SemaphoreHandle_t mutex;
 } BufferResultados;
-
 
 // FIFO y sumas para cada pin
 #define FIFO_SIZE 200
@@ -131,7 +142,6 @@ PinConfig pin_configs[NUM_PINES] = {
 BufferResultados bufferResultados;
 QueueHandle_t queueResultados;
 
-
 // Pines de corriente y voltaje (ajusta según tu hardware)
 const int pines_voltaje[3] = {34, 39, 36};
 const int pines_corriente[1]   = {25};
@@ -152,7 +162,6 @@ const lmic_pinmap lmic_pins = {
     .dio = {26, 33, 32}
 };
 
-static osjob_t sendjob;
 
 // Cola para mensajes binarios LoRa
 struct Fragmento {
@@ -164,13 +173,11 @@ QueueHandle_t queueFragmentos;
 // Semáforo para controlar el envío de fragmentos
 SemaphoreHandle_t semaforoEnvio;
 
-
 // ==================== FUNCIONES DE PROCESAMIENTO ====================
 float applyEMA_original(float input, float &previous_output) {
     previous_output = EMA_ALPHA * input + (1.0f - EMA_ALPHA) * previous_output;
     return previous_output;
 }
-
 
 float applyEMA_adsoluto(float input, float &previous_output) {
     // Parámetros de adaptación
@@ -274,7 +281,6 @@ void codificarYFragmentar(
     }
 }
 
-
 void codificarYFragmentarBattery(
     ResultadoBattery* buffer,
     int num_muestras,
@@ -309,8 +315,6 @@ void codificarYFragmentarBattery(
         fragmentos.push_back(f);
     }
 }
-
-
 
 // ===================== ISR de muestreo ADC =====================
 
@@ -425,11 +429,6 @@ void TaskRegistroResultados(void *pvParameters) {
     while (true) {
         ResultadoRMS resultado;
         if (xQueueReceive(queueResultados, &resultado, portMAX_DELAY) == pdTRUE) {
-          
-            //if (bufferResultados.index == 0) {
-            //    tiempo_ultima_muestra = millis();
-            //    }
-                
             bufferResultados.bloque[bufferResultados.index++] = resultado;
 
         // Si pasan más de 30 segundos sin completar el bloque, reiniciar
@@ -549,7 +548,7 @@ void TaskDisplay(void *pvParameters) {
                         float fv = eventos_lcd[pos].first_value / 10.0f;
                         display.printf("%c t=%lus v=%.1f", tipo, t, fv);
                     } else if (tipo == 'V' || tipo == 'B') {
-                        // Voltaje y Batera son enteros codificados
+                        // Voltaje y Bateria son enteros codificados
                         display.printf("%c t=%lus v=%d", tipo, t, eventos_lcd[pos].first_value);
                     } else {
                         display.printf("%c t=%lus", tipo, t);
@@ -600,25 +599,13 @@ void initLoRa() {
     
     LMIC_setAdrMode(0);
     LMIC_setLinkCheckMode(0);
-    
-    // ✅ Configuración adicional recomendada para US915
-    /*
-    for (int i = 0; i < 72; i++) {
-        if (i != 56 && i != 57 && i != 58 && i != 59 && 
-            i != 60 && i != 61 && i != 62 && i != 63 && i != 65) {
-            LMIC_disableChannel(i);
-        }
-    }
-    */
 
     lora_tx_done = true;
 }
-            // Guardamos �ndices y primer valor para mostrar en OLED
 
+// ==================== TAREA LORA ====================
 void tareaLoRa(void* pvParameters) {
     Fragmento frag;
-    static int enviados_corriente = 0;
-    static int enviados_voltaje = 0;
     while (true) {
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
             xSemaphoreTake(semaforoEnvio, portMAX_DELAY);
@@ -682,8 +669,6 @@ void TaskMonitorPin(void *pvParameters) {
 
 
 // ===================== SETUP Y LOOP =====================
-
-
 void setup() {
     Serial.begin(921600);
     delay(1000);
