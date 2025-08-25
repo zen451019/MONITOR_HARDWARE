@@ -210,6 +210,38 @@ float applyEMA(float input, float &previous_output) {
     return previous_output;
 }
 
+// ==================== EMPAQUETADOR DE BITS ====================
+struct BitPacker {
+    uint32_t buffer = 0; // acumulador de hasta 32 bits
+    int bits_usados = 0; // cuántos bits válidos hay en el buffer
+
+    void push(uint16_t valor, int nbits, std::vector<uint8_t>& out) {
+        // desplazar buffer para dejar espacio
+        buffer <<= nbits;
+        // quedarnos con solo los bits válidos
+        buffer |= (valor & ((1 << nbits) - 1));
+        bits_usados += nbits;
+
+        // mientras tengamos al menos 8 bits, sacar bytes
+        while (bits_usados >= 8) {
+            int shift = bits_usados - 8;
+            uint8_t byte = (buffer >> shift) & 0xFF;
+            out.push_back(byte);
+            bits_usados -= 8;
+            buffer &= (1 << bits_usados) - 1; // limpiar bits ya usados
+        }
+    }
+
+    void flush(std::vector<uint8_t>& out) {
+        if (bits_usados > 0) {
+            uint8_t byte = buffer << (8 - bits_usados);
+            out.push_back(byte);
+            bits_usados = 0;
+            buffer = 0;
+        }
+    }
+};
+
 // ===================== CODIFICACIÓN Y FRAGMENTACIÓN =====================
 void codificarYFragmentar(
     const BufferResultados& buffer,
@@ -217,8 +249,8 @@ void codificarYFragmentar(
     uint8_t id_serie,
     std::vector<Fragmento>& fragmentos
 ) {
-    uint8_t datos[NUM_PINES * RESULTADOS_POR_BLOQUE * 2]; // Tamaño máximo requerido
-    size_t datos_len = 0;
+    std::vector<uint8_t> datos; // usamos vector dinámico, no array fijo
+    datos.reserve(NUM_PINES * RESULTADOS_POR_BLOQUE * 2);
 
     const int* pines;
     int num_canales;
@@ -240,18 +272,25 @@ void codificarYFragmentar(
                 break;
             }
 
-        for (int k = 0; k < RESULTADOS_POR_BLOQUE; ++k) {
-            if (tipo_sensor == 1) {
-                uint16_t valor = 0;
-                if (idx != -1 && !isnan(buffer.bloque[k].valores[idx]))
-                    valor = (uint16_t)round(buffer.bloque[k].valores[idx] * 10.0f);
-                datos[datos_len++] = (valor >> 8) & 0xFF;
-                datos[datos_len++] = valor & 0xFF;
-            } else {
+        if (tipo_sensor == 1) {
+            // ===== Corriente (10 bits con BitPacker) =====
+            BitPacker packer;
+            for (int k = 0; k < RESULTADOS_POR_BLOQUE; ++k) {
+                if (idx != -1 && !isnan(buffer.bloque[k].valores[idx])) {
+                    uint16_t valor = (uint16_t)round(buffer.bloque[k].valores[idx] * 10.0f);
+                    packer.push(valor, 10, datos); // empaquetamos en 10 bits
+                } else {
+                    packer.push(0, 10, datos); // si es inválido, metemos cero
+                }
+            }
+            packer.flush(datos); // vaciar bits pendientes
+        } else {
+            // ===== Voltaje (8 bits directo) =====
+            for (int k = 0; k < RESULTADOS_POR_BLOQUE; ++k) {
                 uint8_t valor = 0;
                 if (idx != -1 && !isnan(buffer.bloque[k].valores[idx]))
                     valor = (uint8_t)round(buffer.bloque[k].valores[idx]);
-                datos[datos_len++] = valor; 
+                datos.push_back(valor);
             }
         }
     }
@@ -259,12 +298,14 @@ void codificarYFragmentar(
     // Fragmentación
     const size_t CABECERA = 8;
     size_t max_datos_por_fragmento = LORA_PAYLOAD_MAX - CABECERA;
-    size_t total_fragmentos = (datos_len + max_datos_por_fragmento - 1) / max_datos_por_fragmento;
+    size_t total_fragmentos = (datos.size() + max_datos_por_fragmento - 1) / max_datos_por_fragmento;
 
     for (size_t frag = 0; frag < total_fragmentos; ++frag) {
         Fragmento f;
         size_t offset = frag * max_datos_por_fragmento;
-        size_t frag_len = (datos_len - offset > max_datos_por_fragmento) ? max_datos_por_fragmento : (datos_len - offset);
+        size_t frag_len = (datos.size() - offset > max_datos_por_fragmento) 
+                            ? max_datos_por_fragmento 
+                            : (datos.size() - offset);
 
         // Cabecera
         f.data[0] = tipo_sensor;
@@ -275,11 +316,12 @@ void codificarYFragmentar(
         for (int i = 0; i < 4; ++i)
             f.data[4 + i] = (ts >> (8 * i)) & 0xFF;
 
-        memcpy(f.data + CABECERA, datos + offset, frag_len);
+        memcpy(f.data + CABECERA, datos.data() + offset, frag_len);
         f.len = CABECERA + frag_len;
         fragmentos.push_back(f);
     }
 }
+
 
 void codificarYFragmentarBattery(
     ResultadoBattery* buffer,
