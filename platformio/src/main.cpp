@@ -1,36 +1,67 @@
 #include <Arduino.h>
 /*
  * File: main.cpp
- * Summary: Reads analog signals from multiple pins on an ESP32, computes RMS,
- *          applies EMA filtering, packages results and sends them over LoRaWAN.
- *          Also measures battery level and detects system on/off via MONITOR_PIN.
+ * Firmware: NEMO V1.0
+ * Summary: Embedded ESP32 system for acquisition, processing, and transmission
+ * of analog signals (current/voltage), with OLED visualization and LoRaWAN uplink.
  *
- * Main components:
- *  - ISR: onADCTimer (ADC sampling)
- *  - FreeRTOS tasks: TaskProcesamiento, TaskRegistroResultados,
- *      TaskBatteryLevel, TaskDisplay, TaskMonitorPin, tareaLoRa
- *  - Encoding: codificarYFragmentar, codificarYFragmentarBattery
- *  - Helpers: applyEMA*, calculateRMS_fifo
+ * Main Features:
+ * - Multi-pin ADC sampling with ISR and circular FIFO buffer
+ * - RMS computation and adaptive EMA filtering
+ * - Results block storage, bit-packed payload encoding
+ * - LoRaWAN uplink (US915, DR3, subband 7)
+ * - Battery level measurement
+ * - System ON/OFF control via MONITOR_PIN
+ * - OLED visualization (logo, NEMO name, full acronym, and event history)
  *
- * I/O / HW:
- *  - ADC pins configured in `pin_configs`
- *  - MONITOR_PIN: input to enable/disable the system
- *  - OLED I2C @ 0x3C
+ * Core Components:
+ * - ISR: onADCTimer (ADC sampling)
+ * - FreeRTOS tasks:
+ *      • TaskProcesamiento (RMS + EMA filtering)
+ *      • TaskRegistroResultados (buffering + encoding + LoRa + Display)
+ *      • TaskBatteryLevel (periodic battery readout)
+ *      • TaskDisplay (OLED with logo and event history)
+ *      • TaskMonitorPin (system enable/disable logic)
+ *      • tareaLoRa (LoRa uplink and event callbacks)
+ * - Encoding: BitPacker + codificarUnificado
  *
- * Dependencies: ESP32AnalogRead, MCCI LMIC (lmic.h), Adafruit_SSD1306, FreeRTOS
- * Build: PlatformIO (ESP32)
+ * Hardware / I/O:
+ * - ADC pins defined in `pin_configs` (3 voltage, 1 current)
+ * - MONITOR_PIN (GPIO 35): system enable/disable
+ * - BATTERY_PIN (GPIO 14): battery monitoring
+ * - OLED I2C @ 0x3C (128x64, includes 20x20 logo + text)
+ * - LoRa (SPI + LMIC, US915 configuration)
+ *
+ * Dependencies:
+ * - ESP32AnalogRead
+ * - MCCI LMIC (lmic.h)
+ * - Adafruit_SSD1306 + Adafruit_GFX + TomThumb font
+ * - FreeRTOS (native ESP32)
  *
  * Notes:
- *  - EMA functions are kept for later tuning.
- *  - Check the /backups folder if you want to consolidate older versions.
+ * - Legacy LCD event handling removed, replaced with `DisplayInfo` queue
+ * - Display starts with logo + NEMO + full acronym (TomThumb font)
+ * - TaskDisplay is now event-driven (updates only on new messages)
+ * - LoRa uplink managed via fragment queue and semaphore
  *
- * Author: Manuel Felipe Ospina    Date: 2025-08-22
+ * Author: Manuel Felipe Ospina
+ * Date:   2025-09-03
  */
+
 
 // Display
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Fonts/TomThumb.h>   // fuente ultra pequeña
+
+const unsigned char epd_bitmap_ [] PROGMEM = {
+  // 'Asset 3, 20x20px
+    0x00, 0x00, 0x00, 0x07, 0xfe, 0x00, 0x1f, 0xff, 0x80, 0x3f, 0xff, 0xc0, 0x7e, 0x07, 0xe0, 0x78, 
+    0x01, 0xf0, 0x71, 0xf8, 0xe0, 0x03, 0xfc, 0x00, 0x07, 0xff, 0x00, 0x0f, 0xff, 0x00, 0x0f, 0x0f, 
+    0x00, 0x06, 0x02, 0x00, 0x00, 0xf0, 0x00, 0x00, 0xf0, 0x00, 0x00, 0xf0, 0x00, 0x00, 0x60, 0x00, 
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
 
 // ADC, math, RTOS, LoRa
 #include <ESP32AnalogRead.h>
@@ -45,7 +76,7 @@
 // Parámetros del display
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define OLED_RESET -1  // El pin reset no está conectado en el TTGO
+#define OLED_RESET -1   // El pin reset no está conectado en el TTGO
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 #define MONITOR_PIN 35
@@ -65,28 +96,36 @@ volatile bool sistema_habilitado = false;
 #endif
 
 #define NUM_PINES 4
-#define RESULTADOS_POR_BLOQUE 50
+#define RESULTADOS_POR_BLOQUE 15
 
-#define LORA_PAYLOAD_MAX 180 // Payload máximo para DR3
+#define LORA_PAYLOAD_MAX 220 // Payload máximo para DR3
 
-// ==================== REGISTRO PARA LCD ====================
+// ==================== REGISTRO PARA LCD (NUEVA ESTRUCTURA) ====================
 #define NUM_EVENTOS_LCD 3
 
-struct EventoLCD {
-    char tipo; // 'C', 'V', 'B'
-    unsigned long tiempo; // en segundos
-    uint8_t frag_idx; // índice de fragmento (0 = primero)
-    int first_value; // primer valor codificado del bloque (o -1 si no aplica)
+// <<< CAMBIO: Nueva estructura de datos para la comunicación con la pantalla.
+// Contiene toda la información necesaria para mostrar un envío.
+struct DisplayInfo {
+    unsigned long timestamp_s;
+    bool sistema_activo;
+    bool bateria_incluida;
+    float valor_bateria;
+    float primer_valor_corriente;
+    float primer_valor_voltaje1; // Podríamos mostrar los 3, pero simplificamos
 };
 
-volatile EventoLCD eventos_lcd[NUM_EVENTOS_LCD];
-volatile int idx_evento_lcd = 0;
-volatile bool lcd_needs_update = false;
+// <<< CAMBIO: Cola para enviar la información a la tarea de display.
+QueueHandle_t queueDisplayInfo; 
+// <<< ELIMINADO: Ya no necesitamos las variables globales antiguas para el LCD.
+// volatile EventoLCD eventos_lcd[NUM_EVENTOS_LCD];
+// volatile int idx_evento_lcd = 0;
+// volatile bool lcd_needs_update = false;
+
 
 // ==================== BATTERY LEVEL CONFIG ====================
 #define BATTERY_PIN 14              // Cambia esto según tu conexión
-#define BATTERY_BUFFER_SIZE 1     // Muestras por paquete
-#define BATTERY_INTERVAL_MS 60000   // 30 segundos
+#define BATTERY_BUFFER_SIZE 1       // Muestras por paquete
+#define BATTERY_INTERVAL_MS 60000   // 60 segundos
 
 struct ResultadoBattery {
     unsigned long timestamp;
@@ -242,124 +281,74 @@ struct BitPacker {
     }
 };
 
-// ===================== CODIFICACIÓN Y FRAGMENTACIÓN =====================
-void codificarYFragmentar(
+// ===================== CODIFICACIÓN UNIFICADA =====================
+void codificarUnificado(
     const BufferResultados& buffer,
-    uint8_t tipo_sensor, // 1 = corriente, 2 = voltaje
-    uint8_t id_serie,
+    uint8_t id_mensaje,
+    bool nueva_bateria,
+    uint8_t nivel_bateria,
+    bool sistema_habilitado,
     std::vector<Fragmento>& fragmentos
 ) {
-    std::vector<uint8_t> datos; // usamos vector dinámico, no array fijo
-    datos.reserve(NUM_PINES * RESULTADOS_POR_BLOQUE * 2);
+    std::vector<uint8_t> datos;
+    datos.reserve(LORA_PAYLOAD_MAX);
 
-    const int* pines;
-    int num_canales;
+    BitPacker packer;
 
-    if (tipo_sensor == 1) {
-        pines = pines_corriente;
-        num_canales = sizeof(pines_corriente) / sizeof(pines_corriente[0]);
-    } else {
-        pines = pines_voltaje;
-        num_canales = sizeof(pines_voltaje) / sizeof(pines_voltaje[0]);
-    }
+    // 1. ID
+    datos.push_back(id_mensaje);
 
-    // Por sensor primero, luego por muestra
-    for (int i = 0; i < num_canales; ++i) {
-        int idx = -1;
-        for (int j = 0; j < NUM_PINES; ++j)
-            if (pin_configs[j].pin == pines[i]) {
-                idx = j;
-                break;
-            }
+    // 2. Timestamp base
+    unsigned long ts = buffer.bloque[0].timestamp;
+    for (int i = 3; i >= 0; --i)
+        datos.push_back((ts >> (8 * i)) & 0xFF);
+    // 3. Flags: bit0 = nueva batería, bit1 = sistema habilitado
+    uint8_t flags = 0;
+    if (nueva_bateria) flags |= 0x01;
+    if (sistema_habilitado) flags |= 0x02;
+    datos.push_back(flags);
 
-        if (tipo_sensor == 1) {
-            // ===== Corriente (10 bits con BitPacker) =====
-            BitPacker packer;
-            for (int k = 0; k < RESULTADOS_POR_BLOQUE; ++k) {
-                if (idx != -1 && !isnan(buffer.bloque[k].valores[idx])) {
-                    uint16_t valor = (uint16_t)round(buffer.bloque[k].valores[idx] * 10.0f);
-                    packer.push(valor, 10, datos); // empaquetamos en 10 bits
-                } else {
-                    packer.push(0, 10, datos); // si es inválido, metemos cero
-                }
-            }
-            packer.flush(datos); // vaciar bits pendientes
-        } else {
-            // ===== Voltaje (8 bits directo) =====
-            for (int k = 0; k < RESULTADOS_POR_BLOQUE; ++k) {
+    // 4. Valor batería (si aplica)
+    datos.push_back(nivel_bateria);
+    //if (nueva_bateria) {
+    //    datos.push_back(nivel_bateria);
+    //}
+
+    // 5. Si el sistema está habilitado → añadir voltaje y corriente
+    if (sistema_habilitado) {
+        // Voltaje (3 canales, 8 bits)
+        for (int ch = 0; ch < 3; ch++) {
+            int idx = -1;
+            for (int j = 0; j < NUM_PINES; j++)
+                if (pin_configs[j].pin == pines_voltaje[ch]) idx = j;
+            for (int k = 0; k < RESULTADOS_POR_BLOQUE; k++) {
                 uint8_t valor = 0;
                 if (idx != -1 && !isnan(buffer.bloque[k].valores[idx]))
                     valor = (uint8_t)round(buffer.bloque[k].valores[idx]);
                 datos.push_back(valor);
             }
         }
+
+        // Corriente (10 bits empaquetados)
+        int idx = -1;
+        for (int j = 0; j < NUM_PINES; j++)
+            if (pin_configs[j].pin == pines_corriente[0]) idx = j;
+        for (int k = 0; k < RESULTADOS_POR_BLOQUE; k++) {
+            uint16_t valor = 0;
+            if (idx != -1 && !isnan(buffer.bloque[k].valores[idx]))
+                valor = (uint16_t)round(buffer.bloque[k].valores[idx] * 10.0f);
+            packer.push(valor, 10, datos);
+        }
+        packer.flush(datos);
     }
-
-    // Fragmentación
-    const size_t CABECERA = 8;
-    size_t max_datos_por_fragmento = LORA_PAYLOAD_MAX - CABECERA;
-    size_t total_fragmentos = (datos.size() + max_datos_por_fragmento - 1) / max_datos_por_fragmento;
-
-    for (size_t frag = 0; frag < total_fragmentos; ++frag) {
-        Fragmento f;
-        size_t offset = frag * max_datos_por_fragmento;
-        size_t frag_len = (datos.size() - offset > max_datos_por_fragmento) 
-                            ? max_datos_por_fragmento 
-                            : (datos.size() - offset);
-
-        // Cabecera
-        f.data[0] = tipo_sensor;
-        f.data[1] = id_serie;
-        f.data[2] = frag;
-        f.data[3] = total_fragmentos;
-        unsigned long ts = buffer.bloque[0].timestamp;
-        for (int i = 0; i < 4; ++i)
-            f.data[4 + i] = (ts >> (8 * i)) & 0xFF;
-
-        memcpy(f.data + CABECERA, datos.data() + offset, frag_len);
-        f.len = CABECERA + frag_len;
-        fragmentos.push_back(f);
-    }
+    Fragmento f;
+    f.len = datos.size();
+    memcpy(f.data, datos.data(), f.len);
+    fragmentos.push_back(f);
 }
 
-
-void codificarYFragmentarBattery(
-    ResultadoBattery* buffer,
-    int num_muestras,
-    uint8_t id_serie,
-    std::vector<Fragmento>& fragmentos
-) {
-    const size_t CABECERA = 8;
-    size_t max_datos_por_fragmento = LORA_PAYLOAD_MAX - CABECERA;
-    size_t total_fragmentos = (num_muestras + max_datos_por_fragmento - 1) / max_datos_por_fragmento;
-
-    for (size_t frag = 0; frag < total_fragmentos; ++frag) {
-        Fragmento f;
-        size_t offset = frag * max_datos_por_fragmento;
-        size_t frag_len = (num_muestras - offset > max_datos_por_fragmento) ?
-                          max_datos_por_fragmento : (num_muestras - offset);
-
-        // Cabecera: tipo_sensor = 3 (batería)
-        f.data[0] = 3;
-        f.data[1] = id_serie;
-        f.data[2] = frag;
-        f.data[3] = total_fragmentos;
-
-        // Timestamp de la primera muestra del bloque
-        unsigned long ts = buffer[0].timestamp;
-        for (int i = 0; i < 4; ++i)
-            f.data[4 + i] = (ts >> (8 * i)) & 0xFF;
-
-        for (size_t i = 0; i < frag_len; ++i)
-            f.data[CABECERA + i] = buffer[offset + i].nivel_codificado;
-
-        f.len = CABECERA + frag_len;
-        fragmentos.push_back(f);
-    }
-}
 
 // ===================== ISR de muestreo ADC =====================
-
 hw_timer_t *adcTimer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 volatile int isr_pin_index = 0;
@@ -379,11 +368,10 @@ float calculateRMS_fifo(const RMS_FIFO& fifo, float gain = 1.0f) {
     if (cnt <= 0) return NAN;
     double mean = sx / cnt;
     double var  = (sx2 / cnt) - (mean * mean);
-    if (var < 0) var = 0;               // clamp por errores numéricos
+    if (var < 0) var = 0;           // clamp por errores numéricos
     double rms = sqrt(var) * (3.3 / 4095.0);
     return (float)(rms * gain);
 }
-
 
 void actualizarNumPinesActivos() {
     num_pines_activos = 0;
@@ -464,44 +452,89 @@ void TaskProcesamiento(void *pvParameters) {
 void TaskRegistroResultados(void *pvParameters) {
     (void)pvParameters;
     bufferResultados.index = 0;
-    static uint8_t id_serie_corriente = 0;
-    static uint8_t id_serie_voltaje = 0;
+    static uint8_t id_mensaje = 0;
     unsigned long tiempo_ultima_muestra = 0;
 
     while (true) {
         ResultadoRMS resultado;
-        if (xQueueReceive(queueResultados, &resultado, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(queueResultados, &resultado, pdMS_TO_TICKS(500)) == pdTRUE) {
             bufferResultados.bloque[bufferResultados.index++] = resultado;
 
-        // Si pasan más de 30 segundos sin completar el bloque, reiniciar
-        if (sistema_habilitado && millis() - tiempo_ultima_muestra > 30000) {
-            Serial.println("[BUFFER] Reiniciando por inactividad");
-            bufferResultados.index = 0;
-        }
-
-        tiempo_ultima_muestra = millis();
-
-            if (bufferResultados.index >= RESULTADOS_POR_BLOQUE) {
-                // Corriente
-                std::vector<Fragmento> frags_corriente;
-                id_serie_corriente = (id_serie_corriente + 1) % 256;
-                codificarYFragmentar(bufferResultados, 1, id_serie_corriente, frags_corriente);
-                Serial.print("[CORRIENTE] Fragmentos generados: ");
-                Serial.println(frags_corriente.size());
-                for (auto& f : frags_corriente) {
-                    xQueueSend(queueFragmentos, &f, portMAX_DELAY);
-                }
-                // Voltaje
-                std::vector<Fragmento> frags_voltaje;
-                id_serie_voltaje = (id_serie_voltaje + 1) % 256;
-                codificarYFragmentar(bufferResultados, 2, id_serie_voltaje, frags_voltaje);
-                Serial.print("[VOLTAJE] Fragmentos generados: ");
-                Serial.println(frags_voltaje.size());
-                for (auto& f : frags_voltaje) {
-                    xQueueSend(queueFragmentos, &f, portMAX_DELAY);
-                }
+            // Reinicio por inactividad
+            if (sistema_habilitado && millis() - tiempo_ultima_muestra > 30000) {
+                Serial.println("[BUFFER] Reiniciando por inactividad");
                 bufferResultados.index = 0;
             }
+            tiempo_ultima_muestra = millis();
+
+            if (sistema_habilitado && bufferResultados.index >= RESULTADOS_POR_BLOQUE) {
+                // ===== Sistema habilitado: bloque completo =====
+                id_mensaje = (id_mensaje + 1) % 256;
+
+                // Checar si hay batería nueva
+                bool nueva_bateria = false;
+                uint8_t nivel_bateria = 0;
+                xSemaphoreTake(mutex_bateria, portMAX_DELAY);
+                if (index_bateria > 0) {
+                    nueva_bateria = true;
+                    nivel_bateria = buffer_bateria[0].nivel_codificado;
+                    index_bateria = 0;
+                }
+                xSemaphoreGive(mutex_bateria);
+
+                std::vector<Fragmento> frags;
+                codificarUnificado(bufferResultados, id_mensaje, nueva_bateria, nivel_bateria, true, frags);
+
+                for (auto& f : frags) {
+                    xQueueSend(queueFragmentos, &f, portMAX_DELAY);
+                }
+
+                // <<< CAMBIO: Preparar y enviar datos a la tarea de display
+                DisplayInfo info = {};
+                info.timestamp_s = bufferResultados.bloque[0].timestamp / 1000;
+                info.sistema_activo = true;
+                info.bateria_incluida = nueva_bateria;
+                if (nueva_bateria) {
+                    info.valor_bateria = nivel_bateria / 10.0f;
+                }
+                // Extraer primer valor de Corriente y Voltaje para la pantalla
+                for(int i = 0; i < NUM_PINES; ++i) {
+                    if (pin_configs[i].pin == pines_corriente[0]) {
+                        info.primer_valor_corriente = bufferResultados.bloque[0].valores[i];
+                    }
+                    if (pin_configs[i].pin == pines_voltaje[0]) { // Tomamos solo el primer pin de voltaje como referencia
+                        info.primer_valor_voltaje1 = bufferResultados.bloque[0].valores[i];
+                    }
+                }
+                xQueueSend(queueDisplayInfo, &info, 0); // Timeout 0 para no bloquear
+
+                bufferResultados.index = 0;
+            }
+        }
+
+        // ===== Sistema deshabilitado: solo batería =====
+        if (!sistema_habilitado) {
+            xSemaphoreTake(mutex_bateria, portMAX_DELAY);
+            if (index_bateria > 0) {
+                id_mensaje = (id_mensaje + 1) % 256;
+                uint8_t nivel_bateria = buffer_bateria[0].nivel_codificado;
+                index_bateria = 0;
+                std::vector<Fragmento> frags;
+                codificarUnificado(bufferResultados, id_mensaje, true, nivel_bateria, false, frags);
+                for (auto& f : frags) {
+                    xQueueSend(queueFragmentos, &f, portMAX_DELAY);
+                }
+
+                // <<< CAMBIO: Preparar y enviar datos a la tarea de display (solo batería)
+                DisplayInfo info = {};
+                info.timestamp_s = millis() / 1000;
+                info.sistema_activo = false;
+                info.bateria_incluida = true;
+                info.valor_bateria = nivel_bateria / 10.0f;
+                xQueueSend(queueDisplayInfo, &info, 0);
+
+            }
+            xSemaphoreGive(mutex_bateria);
         }
     }
 }
@@ -518,9 +551,7 @@ void TaskBatteryLevel(void *pvParameters) {
 
         // Leer ADC y escalar (ejemplo genérico: divisor para 15V)
         uint16_t raw = adc.readRaw();
-        float voltage = (raw / 4095.0f) * 3.3f * voltage_divider_ratio;  // ← ajusta según divisor real
-        //if (voltage > 15.0f) voltage = 15.0f;
-        //if (voltage < 0.0f) voltage = 0.0f;
+        float voltage = (raw / 4095.0f) * 3.3f * voltage_divider_ratio; // ← ajusta según divisor real
         uint8_t valor_codificado = (uint8_t)round(voltage * 10);
 
         ResultadoBattery res;
@@ -531,22 +562,15 @@ void TaskBatteryLevel(void *pvParameters) {
         buffer_bateria[index_bateria++] = res;
 
         if (index_bateria >= BATTERY_BUFFER_SIZE) {
-            std::vector<Fragmento> fragmentos_bateria;
-            id_serie_bateria = (id_serie_bateria + 1) % 256;
-            codificarYFragmentarBattery(buffer_bateria, BATTERY_BUFFER_SIZE, id_serie_bateria, fragmentos_bateria);
-            Serial.print("[BATTERY] Fragmentos generados: ");
-            Serial.println(fragmentos_bateria.size());
-
-            for (auto& f : fragmentos_bateria) {
-                xQueueSend(queueFragmentos, &f, portMAX_DELAY);
-            }
-            index_bateria = 0;
+            // No se mandan fragmentos aquí.
+            // Solo dejamos disponible la batería para TaskRegistroResultados.
+            Serial.println("[BATTERY] Nueva muestra lista");
         }
-
         xSemaphoreGive(mutex_bateria);
     }
 }
 
+// <<< CAMBIO: Tarea de display completamente reescrita para ser más eficiente y clara
 void TaskDisplay(void *pvParameters) {
     if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
         Serial.println(F("No se detectó la pantalla OLED"));
@@ -554,58 +578,94 @@ void TaskDisplay(void *pvParameters) {
     }
 
     display.clearDisplay();
-    display.setTextSize(1);
+
+    // === Logo 20x20 ===
+    display.drawBitmap(0, 0, epd_bitmap_, 20, 20, SSD1306_WHITE);
+
+    // === Nombre + versión al lado del logo ===
+    display.setFont();
+    display.setTextSize(2);
     display.setTextColor(SSD1306_WHITE);
-    display.print("VIVA CRISTO REY");
+    display.setCursor(26, 0);   // mover un poco a la derecha para no chocar con el logo
+    display.print("NEMO");
+
+    display.setTextSize(1);
+    display.setCursor(100, 4);
+    display.print("V1.0");
+
+    // === Acrónimo expandido (TomThumb para que quepa todo) ===
+    display.setFont(&TomThumb);
+    display.setCursor(0, 28);
+    display.print("Node for Electromechanical");
+    display.setCursor(0, 40);
+    display.print("Monitoring & Operation");
+
+    // === Marca + año ===
+    display.setFont();
+    display.setTextSize(1);
+    display.setCursor(65, 54);
+    display.print("EMASA 2025");
+
     display.display();
-    vTaskDelay(pdMS_TO_TICKS(500));
+
+    vTaskDelay(pdMS_TO_TICKS(1500));
+
     
+    // Buffer local para mantener el historial de los últimos envíos
+    static DisplayInfo historial_display[NUM_EVENTOS_LCD];
+    static int idx_historial = 0;
 
     while (true) {
-        display.clearDisplay();
+        DisplayInfo nuevo_evento;
+        // Espera bloqueante hasta que llegue nueva información para mostrar
+        if (xQueueReceive(queueDisplayInfo, &nuevo_evento, portMAX_DELAY) == pdTRUE) {
+            
+            // Añade el nuevo evento al historial circular
+            historial_display[idx_historial] = nuevo_evento;
+            idx_historial = (idx_historial + 1) % NUM_EVENTOS_LCD;
 
-        // Estado
-        display.setCursor(0, 0);
-        display.setTextSize(2);
-        display.print(sistema_habilitado ? "ACTIVO" : "INACTIVO");
+            // Actualiza la pantalla completa
+            display.clearDisplay();
 
-        // Registro de eventos
-        display.setTextSize(1);
-        display.setCursor(0, 20);
-        display.print("Ultimos envios:");
+            // 1. Estado del sistema
+            display.setCursor(0, 0);
+            display.setTextSize(2);
+            display.print(sistema_habilitado ? "ACTIVO" : "INACTIVO");
 
-        int pos = idx_evento_lcd;
-        for (int i = 0; i < NUM_EVENTOS_LCD; i++) {
-            pos = (pos - 1 + NUM_EVENTOS_LCD) % NUM_EVENTOS_LCD;
-            char tipo = eventos_lcd[pos].tipo;
-            unsigned long t = eventos_lcd[pos].tiempo;
-            display.setCursor(0, 32 + i * 10);
-            if (tipo != 0) {
-            // Nota: frag_idx=0 indica primer fragmento del bloque, donde est�e1 el primer valor
+            // 2. Título de la sección de eventos
+            display.setTextSize(1);
+            display.setCursor(0, 20);
+            display.print("Ultimos envios LoRa:");
 
-                // Mostrar el primer valor si fue el primer fragmento del bloque
-                if (eventos_lcd[pos].frag_idx == 0 && eventos_lcd[pos].first_value >= 0) {
-                    if (tipo == 'C') {
-                        // Corriente viene *10, mostramos con un decimal
-                        float fv = eventos_lcd[pos].first_value / 10.0f;
-                        display.printf("%c t=%lus v=%.1f", tipo, t, fv);
-                    } else if (tipo == 'V' || tipo == 'B') {
-                        // Voltaje y Bateria son enteros codificados
-                        display.printf("%c t=%lus v=%d", tipo, t, eventos_lcd[pos].first_value);
-                    } else {
-                        display.printf("%c t=%lus", tipo, t);
+            // 3. Itera sobre el historial para mostrar los eventos (del más nuevo al más viejo)
+            int pos_actual = (idx_historial - 1 + NUM_EVENTOS_LCD) % NUM_EVENTOS_LCD;
+            for (int i = 0; i < NUM_EVENTOS_LCD; i++) {
+                display.setCursor(0, 32 + i * 10);
+                DisplayInfo &evento = historial_display[pos_actual];
+
+                // Si el timestamp es 0, es un registro vacío, no lo mostramos
+                if (evento.timestamp_s > 0) {
+                    if (evento.sistema_activo) {
+                        display.printf("A T:%lus C:%.1fA V:%.0fV",
+                                       evento.timestamp_s % 1000, // Mostramos últimos 3 dígitos para ahorrar espacio
+                                       evento.primer_valor_corriente,
+                                       evento.primer_valor_voltaje1);
+                    } else { // Sistema inactivo, solo reportó batería
+                         display.printf("I T:%lus Bat:%.1fV",
+                                       evento.timestamp_s % 1000,
+                                       evento.valor_bateria);
                     }
-                } else {
-                    display.printf("%c t=%lus", tipo, t);
                 }
+                
+                // Moverse al siguiente evento más antiguo en el buffer circular
+                pos_actual = (pos_actual - 1 + NUM_EVENTOS_LCD) % NUM_EVENTOS_LCD;
             }
-        }
 
-        display.display();
-        vTaskDelay(pdMS_TO_TICKS(500));
+            display.display();
+        }
     }
 }
-   
+    
 // ===================== LORA CALLBACKS Y TAREA =====================
 volatile bool lora_tx_done = true;
 
@@ -623,173 +683,134 @@ void onEvent(ev_t ev) {
 
 void initLoRa() {
     os_init();
-
     LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100); // 1% de tolerancia
-    
     LMIC_reset();
     
     // ✅ Configuración específica para US915
     LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
     
     // ✅ Configuración US915 correcta
-    LMIC_selectSubBand(7); // Subband 1 (canales 0-7 + 64) - más común
-    // Alternativas: subband 2-8 según tu gateway
-    
+    LMIC_selectSubBand(7);
+
     // ✅ Data rates válidos para US915
-    LMIC_setDrTxpow(US915_DR_SF7, 20); // DR0 = SF10BW125 (más confiable)
-    // Otras opciones: DR_SF9, DR_SF8, DR_SF7 (pero verifica compatibilidad)
-    
+    LMIC_setDrTxpow(US915_DR_SF7, 20); // DR3 = SF7BW125
     LMIC_setAdrMode(0);
     LMIC_setLinkCheckMode(0);
-
     lora_tx_done = true;
 }
 
-// ==================== TAREA LORA ====================
+// <<< CAMBIO: Tarea LoRa simplificada al máximo.
 void tareaLoRa(void* pvParameters) {
     Fragmento frag;
     while (true) {
+        // 1. Espera un fragmento para enviar
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
+            
+            // 2. Toma el semáforo para asegurar que no se envíe nada más hasta que termine
             xSemaphoreTake(semaforoEnvio, portMAX_DELAY);
             lora_tx_done = false;
+            
+            // 3. Espera si la radio está ocupada
             while (LMIC.opmode & OP_TXRXPEND) {
                 os_runloop_once();
                 vTaskDelay(5 / portTICK_PERIOD_MS);
             }
             
+            // 4. Envía los datos
             LMIC_setTxData2(1, frag.data, frag.len, 0);
+            Serial.printf("[LORA] Enviando paquete de %d bytes.\n", frag.len);
 
-            // Registrar el evento para la pantalla LCD, incluyendo primer valor del bloque
-            char tipo = '?';
-            int first_value = -1; // -1 = no aplica / desconocido
-            if (frag.data[0] == 1) {
-                tipo = 'C';
-                // Corriente: valores codificados en 2 bytes (big-endian en nuestro armado: alto luego bajo)
-                if (frag.data[2] == 0 && frag.len > 9) {
-                    // CABECERA=7, primer dato empieza en 7
-                    uint16_t v = ((uint16_t)frag.data[8] << 9) | frag.data[9];
-                    first_value = (int)v; // ya viene escalado *10 en codificacion
-                }
-            } else if (frag.data[0] == 2) {
-                tipo = 'V';
-                // Voltaje: valores de 1 byte
-                if (frag.data[2] == 0 && frag.len > 8) {
-                    first_value = (int)frag.data[8];
-                }
-            } else if (frag.data[0] == 3) {
-                tipo = 'B';
-                // Bateria: valores de 1 byte
-                if (frag.data[2] == 0 && frag.len > 8) {
-                    first_value = (int)frag.data[8];
-                }
-            }
-
-            eventos_lcd[idx_evento_lcd].tipo = tipo;
-            eventos_lcd[idx_evento_lcd].tiempo = millis() / 1000;
-            eventos_lcd[idx_evento_lcd].frag_idx = frag.data[2];
-            eventos_lcd[idx_evento_lcd].first_value = first_value;
-            idx_evento_lcd = (idx_evento_lcd + 1) % NUM_EVENTOS_LCD;
-            lcd_needs_update = true;
-
-            // Espera a que el envío termine
+            // 5. Espera a que el envío termine (la ISR de onEvent liberará el semáforo)
             while (!lora_tx_done) {
                 os_runloop_once();
                 vTaskDelay(5 / portTICK_PERIOD_MS);
             }
         }
+        // Ejecuta el runloop de LoRa periódicamente
         os_runloop_once();
         vTaskDelay(5 / portTICK_PERIOD_MS);
     }
 }
+
 void TaskMonitorPin(void *pvParameters) {
-    pinMode(MONITOR_PIN, INPUT);
+    pinMode(MONITOR_PIN, INPUT_PULLUP); // <<< CAMBIO: Usar PULLUP interno si es un switch a GND
     while (true) {
-        sistema_habilitado = (digitalRead(MONITOR_PIN) == LOW); // HIGH = habilitado, LOW = deshabilitado
+        // Asumiendo que un switch a GND activa el sistema (LOW = ACTIVO)
+        sistema_habilitado = (digitalRead(MONITOR_PIN) == LOW); 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
 
 // ===================== SETUP Y LOOP =====================
+
 void setup() {
+    // --- Comunicación serie ---
     Serial.begin(921600);
     delay(1000);
 
-    // Inicializa los lectores ADC
-    for (int i = 0; i < NUM_PINES; i++)
-    pin_configs[i].reader.attach(pin_configs[i].pin);
-
-    // Inicializa las estructuras FIFO
+    // --- Inicialización de lectores ADC ---
     for (int i = 0; i < NUM_PINES; i++) {
-    fifo_pins[i].head = 0;
-    fifo_pins[i].count = 0;
-    fifo_pins[i].sum_x = 0;
-    fifo_pins[i].sum_x2 = 0;
+        pin_configs[i].reader.attach(pin_configs[i].pin);
     }
 
+    // --- Inicialización de estructuras FIFO ---
+    for (int i = 0; i < NUM_PINES; i++) {
+        fifo_pins[i].head   = 0;
+        fifo_pins[i].count  = 0;
+        fifo_pins[i].sum_x  = 0;
+        fifo_pins[i].sum_x2 = 0;
+    }
+
+    // --- Buffer de resultados ---
     bufferResultados.index = 0;
     bufferResultados.mutex = xSemaphoreCreateMutex();
 
+    // --- Colas para resultados, fragmentos y display ---
     queueResultados = xQueueCreate(RESULTADOS_POR_BLOQUE * 2, sizeof(ResultadoRMS));
     queueFragmentos = xQueueCreate(10, sizeof(Fragmento));
+    queueDisplayInfo = xQueueCreate(5, sizeof(DisplayInfo)); // <<< CAMBIO: Crear la nueva cola
 
+    // --- Semáforo de envío LoRa ---
     semaforoEnvio = xSemaphoreCreateBinary();
-    xSemaphoreGive(semaforoEnvio);
+    xSemaphoreGive(semaforoEnvio);  // Lo dejamos disponible al inicio
 
+    // --- Configuración inicial de pines activos ---
     actualizarNumPinesActivos();
     isr_pin_index = 0;
-    // La frecuencia del timer depende de la cantidad de pines activos
+
+    // --- Configuración del timer ADC ---
     int freq_isr = FS_HZ * num_pines_activos;
-    if (freq_isr < 1) freq_isr = 1;
-    adcTimer = timerBegin(0, 80, true); // 80 prescaler: 1us tick (80MHz/80)
+    if (freq_isr < 1) freq_isr = 1; // Frecuencia mínima de 1 Hz
+    adcTimer = timerBegin(0, 80, true);   // Prescaler = 80 → tick de 1 µs (80 MHz / 80)
     timerAttachInterrupt(adcTimer, &onADCTimer, true);
     timerAlarmWrite(adcTimer, 1000000 / freq_isr, true);
     timerAlarmEnable(adcTimer);
 
-    xTaskCreatePinnedToCore(TaskProcesamiento, "Procesamiento", 4096, NULL, 1, NULL, 0);
+    // --- Creación de tareas en FreeRTOS ---
+    xTaskCreatePinnedToCore(TaskProcesamiento,      "Procesamiento",      4096, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(TaskRegistroResultados, "RegistroResultados", 4096, NULL, 1, NULL, 0);
 
+    // --- Tarea de monitoreo de batería ---
     mutex_bateria = xSemaphoreCreateMutex();
     xTaskCreatePinnedToCore(TaskBatteryLevel, "BatteryLevel", 2048, NULL, 0, NULL, 0);
 
-    xTaskCreatePinnedToCore(
-        TaskMonitorPin,
-        "MonitorPinTask",
-        2048,
-        NULL,
-        1,
-        NULL,
-        0
-    );
+    // --- Tarea de monitor del pin ON/OFF ---
+    xTaskCreatePinnedToCore(TaskMonitorPin, "MonitorPinTask", 2048, NULL, 1, NULL, 0);
 
+    // --- Inicialización y tarea LoRa ---
     initLoRa();
-    xTaskCreatePinnedToCore(
-        tareaLoRa,
-        "LoRaTask",
-        8192,
-        NULL,
-        2,
-        NULL,
-        1
-    );
-    xTaskCreatePinnedToCore(
-        TaskDisplay,
-        "DisplayTask",
-        2048,
-        NULL,
-        1,
-        NULL,
-        0
-    );
-    // Inicializar registro LCD
-    for (int i = 0; i < NUM_EVENTOS_LCD; i++) {
-        eventos_lcd[i].tipo = 0;
-        eventos_lcd[i].tiempo = 0;
-        eventos_lcd[i].frag_idx = 255;
-        eventos_lcd[i].first_value = -1;
-    }
+    xTaskCreatePinnedToCore(tareaLoRa, "LoRaTask", 8192, NULL, 2, NULL, 1);
+
+    // --- Tarea de display LCD ---
+    // <<< CAMBIO: Aumenté ligeramente la memoria por el uso de printf
+    xTaskCreatePinnedToCore(TaskDisplay, "DisplayTask", 2560, NULL, 1, NULL, 0);
+
+    // <<< ELIMINADO: Ya no es necesaria la inicialización del registro de eventos antiguo
 }
 
 void loop() {
-  // Todo está en las tareas
+    // El flujo principal está en las tareas (FreeRTOS).
+    // El loop queda vacío.
+    vTaskDelete(NULL); // Opcional: eliminar la tarea del loop de Arduino
 }
