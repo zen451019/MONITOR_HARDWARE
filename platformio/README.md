@@ -1,65 +1,102 @@
-RMS_Voltage (ESP32) - Project README
 
-Overview
---------
-This project runs on an ESP32 and performs multichannel RMS measurement for voltage and current sensors. It:
+# NEMO: Electromechanical Monitoring Firmware
 
-- Samples analog signals from configured ADC pins using a high-frequency ISR-driven sampler.
-- Computes RMS per channel from a FIFO of raw ADC samples.
-- Applies an adaptive EMA (exponential moving average) filter to stabilize readings.
-- Aggregates measurements into blocks and encodes them into compact binary fragments.
-- Sends fragments over LoRaWAN (LMIC library) to a gateway.
-- Periodically measures battery level and transmits it.
-- Detects system enable/disable via a monitor pin (MONITOR_PIN) and shows recent events on an SSD1306 OLED.
+This repository contains the complete source code for the firmware for NEMO (Node for Electromechanical Monitoring & Operation), a high-performance IoT node designed for real-time monitoring of analog signals.
 
-Key features
-------------
-- Multichannel acquisition using a timer-driven ISR that rotates through enabled ADC pins.
-- RMS calculation using incremental sums (sum_x, sum_x2) stored in a per-pin FIFO for efficiency.
-- Compact binary encoding and fragmenting for LoRa payload limits.
-- FreeRTOS-based architecture: separate tasks for processing, storage/encoding, LoRa transmission, battery monitoring and display.
+The system is optimized to capture, process, and transmit voltage and current data from sensors, making it an ideal solution for predictive maintenance, energy consumption monitoring, and industrial machinery diagnostics applications.
 
-Hardware
---------
-- ESP32 (board compatible with PlatformIO project configuration)
-- ADC sensors connected to pins declared in `pin_configs` (see `src/main.cpp`)
-- OLED SSD1306 connected via I2C (address 0x3C)
-- LoRa radio pins mapped in `lmic_pins` (adjust for your board)
-- Monitor pin (`MONITOR_PIN`) to enable/disable the system
+## Project Philosophy
 
-Build & Run
------------
-This project uses PlatformIO. From the project root (where `platformio.ini` is located):
+The NEMO firmware is built on three fundamental pillars:
 
-```powershell
-platformio run
-platformio run -t upload
-```
+1. Accuracy in Acquisition: The basis of any monitoring system is data quality. A hardware timer interrupt (ISR) is used to sample signals at a high and constant frequency, ensuring an accurate representation of waveforms.
 
-Adjust board and upload options in `platformio.ini` if needed.
+2. Edge Computing: Sending raw data over low-bandwidth networks such as LoRaWAN is inefficient. This firmware performs all heavy processing (RMS calculation, filtering) directly on the ESP32, sending only valuable, pre-processed information.
 
-Code structure
---------------
-- `src/main.cpp` - Main application. Contains:
-  - ISR: `onADCTimer` (ADC sampling)
-  - Tasks: `TaskProcesamiento`, `TaskRegistroResultados`, `TaskBatteryLevel`, `TaskDisplay`, `TaskMonitorPin`, `tareaLoRa`
-  - Encoding: `codificarYFragmentar`, `codificarYFragmentarBattery`
-  - Helpers: `applyEMA*`, `calculateRMS_fifo`
+3. Robust and Efficient Operation: Thanks to its FreeRTOS-based architecture, the system is inherently multitasking. Critical operations such as sampling, processing, and communication occur concurrently without interfering with each other, ensuring stable, low-power operation.
 
-- `include/`, `lib/`, and `backups/` - supporting headers, libraries and older snapshots.
+## System Architecture
 
-Important notes
----------------
-- The LMIC keys in `src/main.cpp` are placeholders; replace with your network credentials or use OTAA as needed.
-- Keep EMA parameters and PROCESS_PERIOD_MS tuned to match sampling frequency (FS_HZ) and desired responsiveness.
-- Verify LoRa region settings (sub-band, DR) to match your gateway/provider.
+The firmware operates as a data pipeline managed by several concurrent FreeRTOS tasks.
 
-Next steps / Improvements
-------------------------
-- Split `main.cpp` into smaller modules: `adc.cpp/h`, `lora.cpp/h`, `display.cpp/h` for maintainability.
-- Add unit tests for encoding/decoding routines or a small host-side script to validate fragments.
+### 1. Sampling Stage (ISR - `onADCTimer`)
+
+- **Function:** This is the heart of the system. A timer interrupt is triggered at `FS_HZ` (960 Hz by default).
+
+- **Operation:** On each shot, the ISR reads the raw value from an ADC pin and stores it in a dedicated circular FIFO buffer (`RMS_FIFO`) for that pin. The ISR is minimal to ensure ultra-fast execution and not to disturb the sampling accuracy. The system rotates between the enabled ADC pins on each call.
+
+### 2. Processing Stage (`TaskProcesamiento`)
+
+- **Function:** Convert raw data into useful metrics.
+
+- **Operation:** This task wakes up periodically (every `PROCESS_PERIOD_MS`). For each enabled channel, it calculates the RMS value from the data in its FIFO buffer. It then applies an **adaptive EMA (Exponential Moving Average) filter** that intelligently smooths the reading: it applies more filtering when the signal is stable and less when it detects rapid changes.
+
+### 3. Storage and Encoding Stage (`TaskRegistroResultados`)
+
+- **Function:** Acts as the main orchestrator. Collects the results, packages them, and prepares them for shipment.
+
+- **Operation:** 
+	 1. Receives the filtered RMS results from the `TaskProcesamiento`.
+	
+	2. Stores them in a `RESULTADOS_POR_BLOQUE` block (20 by default).
+	
+	3. Once the block is full, invokes the `codificarUnificado` function.
+	
+	4. This function creates a highly compact binary payload using a `BitPacker` that packs the current values (10 bits per sample) to save space. It also integrates the latest battery level reading.
+	
+	5. The final payload is placed in a queue (`queueFragmentos`) to be sent by LoRaWAN, and a summary is sent to the display task.
 
 
-Contact
--------
-Manuel Felipe Ospina
+### 4. Support Tasks
+
+- `tareaLoRa`: Task dedicated to managing the LoRaWAN communication stack (LMIC). It is a consumer that waits patiently in the `queueFragmentos` queue to send data as soon as it is ready.
+
+- `TaskDisplay`: Manages the OLED display. It shows a startup screen with the logo and then enters an “event history” mode, displaying a summary of the latest transmissions sent. It is efficient, as it only redraws the screen when it receives new information through its queue (`queueDisplayInfo`).
+
+- `TaskMonitorPin`: Allows you to enable or disable the system via a physical pin. When disabled, sampling and processing tasks are paused to save power, but the system continues to report the battery level periodically.
+
+- `TaskBatteryLevel`: Low-priority task that runs every 60 seconds to measure battery voltage, ensuring that the device's status is always known.
+
+## Getting Started
+
+### Hardware Requirements
+
+- **Plate**: Electromechanical variable monitoring module board MONITOR for NEMO
+### Configuration and Compilation
+
+This project is designed to be used with PlatformIO and Visual Studio Code.
+
+1. **Clone this repository.**
+
+2. **Open the project with PlatformIO** in VS Code. Library dependencies (`LMIC`, `Adafruit GFX`, etc.) will be downloaded automatically.
+
+3. **Configure your LoRaWAN credentials:**
+
+	- Open `src/main.cpp`.
+	
+	- Find the following variables and replace the example values with your own LoRaWAN network keys (the code uses **ABP** by default):
+	
+		```c++
+		static u1_t NWKSKEY[16] = { 0x49, ... };
+		static u1_t APPSKEY[16] = { 0x53, ... };
+		static const u4_t DEVADDR = 0x260CB229;
+		```
+
+4. **Adjust the LoRaWAN region:**
+
+- The firmware is configured for `US915`. If you are in another region (e.g., `EU868`), find the `initLoRa()` function and adjust the `LMIC_selectSubBand()` and `LMIC_setDrTxpow()` settings accordingly.
+5. **Compile and Upload the Firmware:**
+
+- Use the PlatformIO buttons in the VS Code status bar or run the following commands in the terminal:
+	```bash
+	platformio run
+	platformio run -t upload
+	```
+
+## Roadmap and Contributions
+
+- [ ] **Modularize the Code:** Separate the logic of `main.cpp` into smaller, more manageable files (e.g., `lora.cpp`, `display.cpp`, `adc.cpp`).
+
+- [ ] **Implement OTAA:** Add support for Over-the-Air Activation (OTAA) in LoRaWAN, which is a more secure and flexible method than ABP.
+  
+- [ ] **Configuration Management:** Move all key definitions and parameters to a single `config.h` file to facilitate adjustments.

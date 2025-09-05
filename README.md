@@ -1,123 +1,102 @@
-# Mejoras para Medición RMS Estable
 
-## Problemas Identificados
+# NEMO: Electromechanical Monitoring Firmware
 
-### 1. **Interferencia de Red Eléctrica**
-- Otros dispositivos conectados introducen ruido y armónicos
-- Variaciones en la impedancia de la red
-- Switching de fuentes de alimentación
+This repository contains the complete source code for the firmware for NEMO (Node for Electromechanical Monitoring & Operation), a high-performance IoT node designed for real-time monitoring of analog signals.
 
-### 2. **Limitaciones del Código Original**
-- Frecuencia de muestreo baja (1kHz)
-- Buffer pequeño (256 muestras)
-- Falta de filtrado anti-aliasing
-- Precisión limitada en cálculos
+The system is optimized to capture, process, and transmit voltage and current data from sensors, making it an ideal solution for predictive maintenance, energy consumption monitoring, and industrial machinery diagnostics applications.
 
-## Mejoras Implementadas en el Código
+## Project Philosophy
 
-### 1. **Parámetros Mejorados**
-- Frecuencia de muestreo: 1kHz → 2kHz
-- Tamaño de buffer: 256 → 512 muestras
-- Tiempo de captura: ~0.25s (más ciclos para promedio estable)
+The NEMO firmware is built on three fundamental pillars:
 
-### 2. **Filtrado Digital**
-- Filtro Butterworth pasa-bajos de 4to orden
-- Frecuencia de corte: 500Hz
-- Elimina ruido de alta frecuencia y aliasing
+1. Accuracy in Acquisition: The basis of any monitoring system is data quality. A hardware timer interrupt (ISR) is used to sample signals at a high and constant frequency, ensuring an accurate representation of waveforms.
 
-### 3. **Mayor Precisión**
-- Cálculos intermedios en double
-- Validación de muestras ADC
-- Filtro EMA más conservador (α=0.1)
+2. Edge Computing: Sending raw data over low-bandwidth networks such as LoRaWAN is inefficient. This firmware performs all heavy processing (RMS calculation, filtering) directly on the ESP32, sending only valuable, pre-processed information.
 
-### 4. **Configuración ADC Mejorada**
-- Resolución 12 bits
-- Atenuación 11dB para rango completo
-- Mejor aprovechamiento del rango dinámico
+3. Robust and Efficient Operation: Thanks to its FreeRTOS-based architecture, the system is inherently multitasking. Critical operations such as sampling, processing, and communication occur concurrently without interfering with each other, ensuring stable, low-power operation.
 
-## Recomendaciones de Hardware
+## System Architecture
 
-### 1. **Filtro Anti-Aliasing Analógico**
-Agregar antes del ADC:
-```
-Señal → R=1kΩ → C=330nF → ADC
-                    |
-                   GND
-```
-Frecuencia de corte: ~480Hz
+The firmware operates as a data pipeline managed by several concurrent FreeRTOS tasks.
 
-### 2. **Acondicionamiento de Señal**
-- **Divisor de voltaje preciso** con resistencias de 1%
-- **Amplificador operacional** para buffering
-- **Protección contra sobrevoltaje**
+### 1. Sampling Stage (ISR - `onADCTimer`)
 
-### 3. **Aislamiento**
-- **Transformador de aislamiento** para medición de voltaje AC
-- **Sensor de corriente tipo pinza** para medición no invasiva
-- **Optoacopladores** para aislamiento digital
+- **Function:** This is the heart of the system. A timer interrupt is triggered at `FS_HZ` (960 Hz by default).
 
-### 4. **Alimentación Limpia**
-- **Fuente lineal** en lugar de switching para el ESP32
-- **Filtros LC** en la alimentación
-- **Condensadores de desacoplo** cerca del ADC
+- **Operation:** On each shot, the ISR reads the raw value from an ADC pin and stores it in a dedicated circular FIFO buffer (`RMS_FIFO`) for that pin. The ISR is minimal to ensure ultra-fast execution and not to disturb the sampling accuracy. The system rotates between the enabled ADC pins on each call.
 
-### 5. **PCB y Cableado**
-- **Plano de tierra sólido**
-- **Separación analógica/digital**
-- **Cable blindado** para señales de entrada
-- **Ferrites** en cables de alimentación
+### 2. Processing Stage (`TaskProcesamiento`)
 
-## Calibración y Verificación
+- **Function:** Convert raw data into useful metrics.
 
-### 1. **Calibración de Ganancia**
-```cpp
-// Medir voltaje conocido y ajustar ganancia
-float voltaje_referencia = 230.0f;  // Voltaje RMS conocido
-float lectura_sistema = medicion_rms;
-float factor_correccion = voltaje_referencia / lectura_sistema;
-// Aplicar factor_correccion a la ganancia
-```
+- **Operation:** This task wakes up periodically (every `PROCESS_PERIOD_MS`). For each enabled channel, it calculates the RMS value from the data in its FIFO buffer. It then applies an **adaptive EMA (Exponential Moving Average) filter** that intelligently smooths the reading: it applies more filtering when the signal is stable and less when it detects rapid changes.
 
-### 2. **Verificación con Multímetro**
-- Usar multímetro True RMS como referencia
-- Comparar en diferentes condiciones de carga
-- Documentar desviaciones y ajustar
+### 3. Storage and Encoding Stage (`TaskRegistroResultados`)
 
-### 3. **Pruebas de Estabilidad**
-- Medición continua durante 24 horas
-- Variación de temperatura
-- Diferentes cargas en la red
+- **Function:** Acts as the main orchestrator. Collects the results, packages them, and prepares them for shipment.
 
-## Configuración Recomendada
+- **Operation:** 
+	 1. Receives the filtered RMS results from the `TaskProcesamiento`.
+	
+	2. Stores them in a `RESULTADOS_POR_BLOQUE` block (20 by default).
+	
+	3. Once the block is full, invokes the `codificarUnificado` function.
+	
+	4. This function creates a highly compact binary payload using a `BitPacker` that packs the current values (10 bits per sample) to save space. It also integrates the latest battery level reading.
+	
+	5. The final payload is placed in a queue (`queueFragmentos`) to be sent by LoRaWAN, and a summary is sent to the display task.
 
-### Para Voltaje AC (230V):
-```cpp
-// Divisor 230V → 3.3V (ratio ~70:1)
-{pin, 70.0f, ESP32AnalogRead(), buffer, 0.0f, 0, true, 0.0f}
-```
 
-### Para Corriente AC (con sensor 30A/1V):
-```cpp
-// Sensor 30A → 1V, luego a 3.3V ADC
-{pin, 30.0f, ESP32AnalogRead(), buffer, 0.0f, 0, true, 0.0f}
-```
+### 4. Support Tasks
 
-## Monitoreo y Debug
+- `tareaLoRa`: Task dedicated to managing the LoRaWAN communication stack (LMIC). It is a consumer that waits patiently in the `queueFragmentos` queue to send data as soon as it is ready.
 
-El código incluye salida de debug cada 5 segundos:
-```
-Pin 36: Raw RMS=2.145, Filtered=2.138, Gain=386.0
-```
+- `TaskDisplay`: Manages the OLED display. It shows a startup screen with the logo and then enters an “event history” mode, displaying a summary of the latest transmissions sent. It is efficient, as it only redraws the screen when it receives new information through its queue (`queueDisplayInfo`).
 
-Esto permite verificar:
-- Valor RMS sin filtrar
-- Valor RMS filtrado
-- Ganancia aplicada
+- `TaskMonitorPin`: Allows you to enable or disable the system via a physical pin. When disabled, sampling and processing tasks are paused to save power, but the system continues to report the battery level periodically.
 
-## Próximos Pasos
+- `TaskBatteryLevel`: Low-priority task that runs every 60 seconds to measure battery voltage, ensuring that the device's status is always known.
 
-1. **Implementar filtro analógico** antes del ADC
-2. **Calibrar ganancias** con voltímetro de referencia
-3. **Agregar aislamiento** para seguridad
-4. **Optimizar frecuencia de muestreo** según necesidades
-5. **Implementar detección de armónicos** si es necesario
+## Getting Started
+
+### Hardware Requirements
+
+- **Plate**: Electromechanical variable monitoring module board MONITOR for NEMO
+### Configuration and Compilation
+
+This project is designed to be used with PlatformIO and Visual Studio Code.
+
+1. **Clone this repository.**
+
+2. **Open the project with PlatformIO** in VS Code. Library dependencies (`LMIC`, `Adafruit GFX`, etc.) will be downloaded automatically.
+
+3. **Configure your LoRaWAN credentials:**
+
+	- Open `src/main.cpp`.
+	
+	- Find the following variables and replace the example values with your own LoRaWAN network keys (the code uses **ABP** by default):
+	
+		```c++
+		static u1_t NWKSKEY[16] = { 0x49, ... };
+		static u1_t APPSKEY[16] = { 0x53, ... };
+		static const u4_t DEVADDR = 0x260CB229;
+		```
+
+4. **Adjust the LoRaWAN region:**
+
+- The firmware is configured for `US915`. If you are in another region (e.g., `EU868`), find the `initLoRa()` function and adjust the `LMIC_selectSubBand()` and `LMIC_setDrTxpow()` settings accordingly.
+5. **Compile and Upload the Firmware:**
+
+- Use the PlatformIO buttons in the VS Code status bar or run the following commands in the terminal:
+	```bash
+	platformio run
+	platformio run -t upload
+	```
+
+## Roadmap and Contributions
+
+- [ ] **Modularize the Code:** Separate the logic of `main.cpp` into smaller, more manageable files (e.g., `lora.cpp`, `display.cpp`, `adc.cpp`).
+
+- [ ] **Implement OTAA:** Add support for Over-the-Air Activation (OTAA) in LoRaWAN, which is a more secure and flexible method than ABP.
+  
+- [ ] **Configuration Management:** Move all key definitions and parameters to a single `config.h` file to facilitate adjustments.

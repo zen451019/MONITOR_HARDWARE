@@ -1,53 +1,85 @@
-#include <Arduino.h>
-/*
- * File: main.cpp
- * Firmware: NEMO V1.0
- * Summary: Embedded ESP32 system for acquisition, processing, and transmission
- * of analog signals (current/voltage), with OLED visualization and LoRaWAN uplink.
+/**********************************************************************************************************************
+ * @file        main.cpp
+ * @author      Manuel Felipe Ospina
+ * @date        2025-09-03
+ * @version     1.0
+ *
+ * @brief       Firmware for NEMO (Node for Electromechanical Monitoring & Operation).
+ * @details     This firmware runs on an ESP32 and is designed for the acquisition, processing,
+ * and transmission of analog signals (current/voltage). It features an OLED display
+ * for real-time visualization and uses LoRaWAN for data uplink.
+ *
+ * --------------------------------------------------------------------------------------------------------------------
+ *
+ * @copyright   Copyright (c) 2025, EMASA. All rights reserved.
+ *
+ * @license     Pending
+ *
+ **********************************************************************************************************************
+ *
+ * System Architecture:
+ * --------------------
+ * The system uses FreeRTOS to manage concurrent tasks for data acquisition, processing, and communication.
+ * - An ISR (`onADCTimer`) samples ADC pins at a high frequency (`FS_HZ`) and stores data in a circular FIFO buffer.
+ * - `TaskProcesamiento`: Periodically calculates RMS values from the FIFO, applies an adaptive EMA filter,
+ * and sends the results to a processing queue.
+ * - `TaskRegistroResultados`: Collects processed results into blocks. Once a block is full or the system
+ * is disabled, it encodes the data into a bit-packed LoRaWAN payload.
+ * - `tareaLoRa`: Manages the LoRaWAN communication, sending payloads from a queue and handling TX/RX events.
+ * - `TaskBatteryLevel`: Periodically measures the battery voltage.
+ * - `TaskDisplay`: Manages the OLED screen, showing a boot sequence and a log of recent LoRaWAN transmissions.
+ * - `TaskMonitorPin`: Controls the system's global enable/disable state based on a physical pin.
  *
  * Main Features:
- * - Multi-pin ADC sampling with ISR and circular FIFO buffer
- * - RMS computation and adaptive EMA filtering
- * - Results block storage, bit-packed payload encoding
- * - LoRaWAN uplink (US915, DR3, subband 7)
- * - Battery level measurement
- * - System ON/OFF control via MONITOR_PIN
- * - OLED visualization (logo, NEMO name, full acronym, and event history)
+ * --------------
+ * - Multi-channel ADC sampling using a hardware timer ISR.
+ * - Efficient RMS calculation with a running circular buffer.
+ * - Adaptive Exponential Moving Average (EMA) filtering for signal smoothing.
+ * - Data blocking and bit-packed payload encoding for efficient LoRaWAN transmission.
+ * - LoRaWAN uplink configured for US915 (Sub-band 7, DR3).
+ * - Battery level monitoring.
+ * - System ON/OFF control via `MONITOR_PIN`.
+ * - OLED display with boot logo and event history.
  *
- * Core Components:
- * - ISR: onADCTimer (ADC sampling)
- * - FreeRTOS tasks:
- *      • TaskProcesamiento (RMS + EMA filtering)
- *      • TaskRegistroResultados (buffering + encoding + LoRa + Display)
- *      • TaskBatteryLevel (periodic battery readout)
- *      • TaskDisplay (OLED with logo and event history)
- *      • TaskMonitorPin (system enable/disable logic)
- *      • tareaLoRa (LoRa uplink and event callbacks)
- * - Encoding: BitPacker + codificarUnificado
- *
- * Hardware / I/O:
- * - ADC pins defined in `pin_configs` (3 voltage, 1 current)
- * - MONITOR_PIN (GPIO 35): system enable/disable
- * - BATTERY_PIN (GPIO 14): battery monitoring
- * - OLED I2C @ 0x3C (128x64, includes 20x20 logo + text)
- * - LoRa (SPI + LMIC, US915 configuration)
+ * Hardware Configuration:
+ * -----------------------
+ * - MCU:          ESP32
+ * - Display:      128x64 OLED (I2C Addr: 0x3C)
+ * - LoRa Module:  (LMIC compatible)
+ * - NSS:        GPIO 18
+ * - RST:        GPIO 14
+ * - DIO{0,1,2}: GPIO {26, 33, 32}
+ * - Analog Inputs:
+ * - Voltage 1:  GPIO 36
+ * - Voltage 2:  GPIO 39
+ * - Voltage 3:  GPIO 34
+ * - Current 1:  GPIO 25
+ * - Control & Monitoring:
+ * - System EN/DIS: GPIO 35 (MONITOR_PIN)
+ * - Battery ADC:   GPIO 14 (BATTERY_PIN) *Note: Same as LoRa RST.*
  *
  * Dependencies:
- * - ESP32AnalogRead
- * - MCCI LMIC (lmic.h)
- * - Adafruit_SSD1306 + Adafruit_GFX + TomThumb font
- * - FreeRTOS (native ESP32)
+ * -------------
+ * - Arduino Core for ESP32
+ * - FreeRTOS (ESP-IDF)
+ * - ESP32AnalogRead library
+ * - MCCI LoRaWAN LMIC library
+ * - Adafruit GFX and Adafruit SSD1306 libraries
  *
- * Notes:
- * - Legacy LCD event handling removed, replaced with `DisplayInfo` queue
- * - Display starts with logo + NEMO + full acronym (TomThumb font)
- * - TaskDisplay is now event-driven (updates only on new messages)
- * - LoRa uplink managed via fragment queue and semaphore
- *
- * Author: Manuel Felipe Ospina
- * Date:   2025-09-03
- */
+ * Revision History:
+ * -----------------
+ * Version |    Date    |     Author      |              Description
+ * --------|------------|-----------------|----------------------------------------------------
+ * 1.0     | 2025-09-03 | Manuel F. Ospina| Changed LoRa message transmission to a unified
+ *         |            |                 | message model, replacing previous fragmented system.
+ * --------|------------|-----------------|----------------------------------------------------
+ * 1.1     | 2025-09-05 | Manuel F. Ospina| Redesigned payload format into a unified, scalable
+ *         |            |                 | and modular message model for LoRa transmission.
+ * --------|------------|-----------------|----------------------------------------------------
+ * 
+ *********************************************************************************************************************/
 
+#include <Arduino.h>
 
 // Display
 #include <Wire.h>
@@ -68,6 +100,10 @@ const unsigned char epd_bitmap_ [] PROGMEM = {
 #include <math.h>
 #include <vector>
 #include <stdint.h>
+//Deshabilitar ventana RX de recepción
+#define DISABLE_INVERT_IQ_ON_RX 1
+#define DISABLE_RX 1
+
 #include <lmic.h>
 #include <hal/hal.h>
 #include <SPI.h>
@@ -82,7 +118,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define MONITOR_PIN 35
 volatile bool sistema_habilitado = false;
 
-// ==================== PARÁMETROS DEL PIN_ACTIVACIÒN ====================
+// ==================== PARÁMETROS DEL PIN_ACTIVACIÓN ====================
 
 // ==================== PARÁMETROS DEL SISTEMA ====================
 #ifndef FS_HZ
@@ -96,7 +132,7 @@ volatile bool sistema_habilitado = false;
 #endif
 
 #define NUM_PINES 4
-#define RESULTADOS_POR_BLOQUE 15
+#define RESULTADOS_POR_BLOQUE 20
 
 #define LORA_PAYLOAD_MAX 220 // Payload máximo para DR3
 
@@ -160,7 +196,7 @@ typedef struct {
 } BufferResultados;
 
 // FIFO y sumas para cada pin
-#define FIFO_SIZE 200
+#define FIFO_SIZE 320
 struct RMS_FIFO {
         uint16_t buffer[FIFO_SIZE];
         int head;
@@ -184,6 +220,24 @@ QueueHandle_t queueResultados;
 // Pines de corriente y voltaje (ajusta según tu hardware)
 const int pines_voltaje[3] = {34, 39, 36};
 const int pines_corriente[1]   = {25};
+
+// ==================== ESTRUCTURAS PARA SENSORES EXTERNOS/FUTUROS ====================
+#define MAX_SENSORES_EXTERNOS 4 // Sensores lógicos 2, 3, 4, 5
+#define SENSOR_DATA_MAX_LEN 10  // Máximo 10 bytes de datos por sensor (muy flexible)
+
+struct ExternalSensorData {
+    bool is_new;                      // Flag para indicar si hay datos nuevos
+    uint8_t data[SENSOR_DATA_MAX_LEN];  // Buffer para los datos del sensor
+    uint8_t len;                      // Cuántos bytes de datos hay
+    bool packed;                      // ¿Están los datos empaquetados en bits?
+    bool extended;                    // ¿Cada muestra usa 2 bytes?
+};
+
+// Buffers globales para los datos de los sensores externos
+ExternalSensorData external_sensors[MAX_SENSORES_EXTERNOS];
+// Mutex para proteger el acceso a cada buffer
+SemaphoreHandle_t mutex_external_sensors[MAX_SENSORES_EXTERNOS];
+
 
 // ==================== LORA CONFIG ====================
 void os_getArtEui(u1_t* buf) { memset(buf, 0, 8); }
@@ -251,14 +305,14 @@ float applyEMA(float input, float &previous_output) {
 
 // ==================== EMPAQUETADOR DE BITS ====================
 struct BitPacker {
-    uint32_t buffer = 0; // acumulador de hasta 32 bits
+    uint64_t buffer = 0; // acumulador de hasta 64 bits
     int bits_usados = 0; // cuántos bits válidos hay en el buffer
 
     void push(uint16_t valor, int nbits, std::vector<uint8_t>& out) {
         // desplazar buffer para dejar espacio
         buffer <<= nbits;
         // quedarnos con solo los bits válidos
-        buffer |= (valor & ((1 << nbits) - 1));
+        buffer |= (valor & ((1ULL << nbits) - 1));
         bits_usados += nbits;
 
         // mientras tengamos al menos 8 bits, sacar bytes
@@ -285,65 +339,112 @@ struct BitPacker {
 void codificarUnificado(
     const BufferResultados& buffer,
     uint8_t id_mensaje,
-    bool nueva_bateria,
+    bool nueva_bateria, // Necesitamos saber si la batería se debe enviar, no solo el nivel
     uint8_t nivel_bateria,
+    uint8_t data_len_rms, // ej: RESULTADOS_POR_BLOQUE
     bool sistema_habilitado,
+    const ExternalSensorData datos_externos[MAX_SENSORES_EXTERNOS], // Nuevos datos
     std::vector<Fragmento>& fragmentos
 ) {
-    std::vector<uint8_t> datos;
-    datos.reserve(LORA_PAYLOAD_MAX);
+    std::vector<uint8_t> payload;
+    payload.reserve(LORA_PAYLOAD_MAX);
 
-    BitPacker packer;
+    // ================== 1. CABECERA ==================
+    payload.push_back(id_mensaje);
 
-    // 1. ID
-    datos.push_back(id_mensaje);
+    // Timestamp (si el sistema está activo, usamos el del buffer, si no, el actual)
+    unsigned long ts_s = (sistema_habilitado) ? (buffer.bloque[0].timestamp / 1000) : (millis() / 1000);
+    payload.push_back((ts_s >> 24) & 0xFF);
+    payload.push_back((ts_s >> 16) & 0xFF);
+    payload.push_back((ts_s >> 8) & 0xFF);
+    payload.push_back(ts_s & 0xFF);
 
-    // 2. Timestamp base
-    unsigned long ts = buffer.bloque[0].timestamp;
-    for (int i = 3; i >= 0; --i)
-        datos.push_back((ts >> (8 * i)) & 0xFF);
-    // 3. Flags: bit0 = nueva batería, bit1 = sistema habilitado
-    uint8_t flags = 0;
-    if (nueva_bateria) flags |= 0x01;
-    if (sistema_habilitado) flags |= 0x02;
-    datos.push_back(flags);
-
-    // 4. Valor batería (si aplica)
-    datos.push_back(nivel_bateria);
-    //if (nueva_bateria) {
-    //    datos.push_back(nivel_bateria);
-    //}
-
-    // 5. Si el sistema está habilitado → añadir voltaje y corriente
+    // Construir Activate byte
+    uint8_t activate_byte = 0;
     if (sistema_habilitado) {
-        // Voltaje (3 canales, 8 bits)
-        for (int ch = 0; ch < 3; ch++) {
-            int idx = -1;
-            for (int j = 0; j < NUM_PINES; j++)
-                if (pin_configs[j].pin == pines_voltaje[ch]) idx = j;
-            for (int k = 0; k < RESULTADOS_POR_BLOQUE; k++) {
+        // Asumimos que quieres enviar Voltaje y Corriente si el sistema está activo
+        // Bit 0: Voltaje, Bit 1: Corriente
+        activate_byte |= (1 << 0);
+        activate_byte |= (1 << 1);
+    }
+    // Añadir los sensores externos que tengan datos nuevos
+    for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+        if (datos_externos[i].is_new) {
+            activate_byte |= (1 << (i + 2)); // i=0 es sensor 2, i=1 es sensor 3, etc.
+        }
+    }
+    payload.push_back(activate_byte);
+    payload.push_back(nivel_bateria); // La batería siempre va
+
+    // ================== 2. DESCRIPTORES DE LONGITUD ==================
+    // Se añaden en orden de los bits de 'Activate'
+    if ((activate_byte >> 0) & 0x01) { // Voltaje
+        uint8_t len_byte = (data_len_rms & 0x1F); // No packed, no extended
+        payload.push_back(len_byte);
+    }
+    if ((activate_byte >> 1) & 0x01) { // Corriente
+        uint8_t len_byte = 0x80 | (data_len_rms & 0x1F); // Packed, no extended
+        payload.push_back(len_byte);
+    }
+    for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+        if (datos_externos[i].is_new) {
+            uint8_t len_byte = 0;
+            if (datos_externos[i].packed)   len_byte |= 0x80;
+            if (datos_externos[i].extended) len_byte |= 0x40;
+            // Para datos simples, la longitud suele ser 1
+            len_byte |= (1 & 0x1F); 
+            payload.push_back(len_byte);
+        }
+    }
+
+    // ================== 3. BLOQUES DE DATOS ==================
+    BitPacker packer;
+    // --- Datos de Voltaje (si está activo) ---
+    if ((activate_byte >> 0) & 0x01) {
+        // ASUNCIÓN: pin_configs[0,1,2] son voltajes. Se rellenan con 0 si no están.
+        const int pines_voltaje_idx[] = {0, 1, 2}; // Índices en pin_configs
+        for (int ch = 0; ch < 3; ++ch) {
+            int idx = pines_voltaje_idx[ch];
+            for (int k = 0; k < data_len_rms; ++k) {
                 uint8_t valor = 0;
-                if (idx != -1 && !isnan(buffer.bloque[k].valores[idx]))
+                if (pin_configs[idx].enabled && !isnan(buffer.bloque[k].valores[idx])) {
                     valor = (uint8_t)round(buffer.bloque[k].valores[idx]);
-                datos.push_back(valor);
+                }
+                payload.push_back(valor);
             }
         }
-
-        // Corriente (10 bits empaquetados)
-        int idx = -1;
-        for (int j = 0; j < NUM_PINES; j++)
-            if (pin_configs[j].pin == pines_corriente[0]) idx = j;
-        for (int k = 0; k < RESULTADOS_POR_BLOQUE; k++) {
-            uint16_t valor = 0;
-            if (idx != -1 && !isnan(buffer.bloque[k].valores[idx]))
-                valor = (uint16_t)round(buffer.bloque[k].valores[idx] * 10.0f);
-            packer.push(valor, 10, datos);
-        }
-        packer.flush(datos);
     }
+    // --- Datos de Corriente (si está activo) ---
+    if ((activate_byte >> 1) & 0x01) {
+        // ASUNCIÓN: pin_configs[3] es la única corriente. Rellenamos 2 canales con ceros.
+        int idx_corriente = 3; 
+        // Canal 1 (real)
+        for (int k = 0; k < data_len_rms; ++k) {
+            uint16_t valor = 0;
+            if (pin_configs[idx_corriente].enabled && !isnan(buffer.bloque[k].valores[idx_corriente])) {
+                valor = (uint16_t)round(buffer.bloque[k].valores[idx_corriente] * 10.0f);
+            }
+            packer.push(valor, 10, payload);
+        }
+        // Canales 2 y 3 (relleno con ceros)
+        for (int ch = 0; ch < 2; ++ch) {
+            for (int k = 0; k < data_len_rms; ++k) {
+                packer.push(0, 10, payload);
+            }
+        }
+        packer.flush(payload);
+    }
+    // --- Datos de Sensores Externos ---
+    for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+        if (datos_externos[i].is_new) {
+            payload.insert(payload.end(), datos_externos[i].data, datos_externos[i].data + datos_externos[i].len);
+        }
+    }
+
+    // Empaquetar en fragmentos
     Fragmento f;
-    f.len = datos.size();
-    memcpy(f.data, datos.data(), f.len);
+    f.len = payload.size();
+    memcpy(f.data, payload.data(), f.len);
     fragmentos.push_back(f);
 }
 
@@ -454,6 +555,7 @@ void TaskRegistroResultados(void *pvParameters) {
     bufferResultados.index = 0;
     static uint8_t id_mensaje = 0;
     unsigned long tiempo_ultima_muestra = 0;
+    ExternalSensorData datos_externos_para_envio[MAX_SENSORES_EXTERNOS];
 
     while (true) {
         ResultadoRMS resultado;
@@ -482,8 +584,30 @@ void TaskRegistroResultados(void *pvParameters) {
                 }
                 xSemaphoreGive(mutex_bateria);
 
+                // <<< NUEVO: Recolectar datos de sensores externos >>>
+                //ExternalSensorData datos_externos_para_envio[MAX_SENSORES_EXTERNOS];
+                for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+                    datos_externos_para_envio[i].is_new = false; // Por defecto, no hay datos nuevos
+                    if (xSemaphoreTake(mutex_external_sensors[i], pdMS_TO_TICKS(10)) == pdTRUE) {
+                        if (external_sensors[i].is_new) {
+                            memcpy(&datos_externos_para_envio[i], &external_sensors[i], sizeof(ExternalSensorData));
+                            external_sensors[i].is_new = false; // Marcar como "consumido"
+                        }
+                        xSemaphoreGive(mutex_external_sensors[i]);
+                    }
+                }
+
                 std::vector<Fragmento> frags;
-                codificarUnificado(bufferResultados, id_mensaje, nueva_bateria, nivel_bateria, true, frags);
+                codificarUnificado(
+                    bufferResultados, 
+                    id_mensaje, 
+                    nueva_bateria, 
+                    nivel_bateria, 
+                    RESULTADOS_POR_BLOQUE, 
+                    true, // sistema_habilitado
+                    datos_externos_para_envio, // <<< Pasamos los nuevos datos
+                    frags
+                );
 
                 for (auto& f : frags) {
                     xQueueSend(queueFragmentos, &f, portMAX_DELAY);
@@ -491,7 +615,7 @@ void TaskRegistroResultados(void *pvParameters) {
 
                 // <<< CAMBIO: Preparar y enviar datos a la tarea de display
                 DisplayInfo info = {};
-                info.timestamp_s = bufferResultados.bloque[0].timestamp / 1000;
+                info.timestamp_s = bufferResultados.bloque[RESULTADOS_POR_BLOQUE - 1].timestamp / 1000;
                 info.sistema_activo = true;
                 info.bateria_incluida = nueva_bateria;
                 if (nueva_bateria) {
@@ -519,11 +643,37 @@ void TaskRegistroResultados(void *pvParameters) {
                 id_mensaje = (id_mensaje + 1) % 256;
                 uint8_t nivel_bateria = buffer_bateria[0].nivel_codificado;
                 index_bateria = 0;
+
+                //ExternalSensorData datos_externos_para_envio[MAX_SENSORES_EXTERNOS];
+                for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+                    datos_externos_para_envio[i].is_new = false; // Por defecto, no hay datos nuevos
+                    if (xSemaphoreTake(mutex_external_sensors[i], pdMS_TO_TICKS(10)) == pdTRUE) {
+                        if (external_sensors[i].is_new) {
+                            memcpy(&datos_externos_para_envio[i], &external_sensors[i], sizeof(ExternalSensorData));
+                            external_sensors[i].is_new = false; // Marcar como "consumido"
+                        }
+                        xSemaphoreGive(mutex_external_sensors[i]);
+                    }
+                }
+
                 std::vector<Fragmento> frags;
-                codificarUnificado(bufferResultados, id_mensaje, true, nivel_bateria, false, frags);
+                codificarUnificado(
+                    bufferResultados, 
+                    id_mensaje, 
+                    true, 
+                    nivel_bateria, 
+                    RESULTADOS_POR_BLOQUE, 
+                    false, // sistema_habilitado
+                    datos_externos_para_envio, // <<< Pasamos los nuevos datos
+                    frags
+                );
+
                 for (auto& f : frags) {
                     xQueueSend(queueFragmentos, &f, portMAX_DELAY);
                 }
+                //for (auto& f : frags) {
+                //    xQueueSend(queueFragmentos, &f, portMAX_DELAY);
+                //}
 
                 // <<< CAMBIO: Preparar y enviar datos a la tarea de display (solo batería)
                 DisplayInfo info = {};
@@ -717,7 +867,7 @@ void tareaLoRa(void* pvParameters) {
             }
             
             // 4. Envía los datos
-            LMIC_setTxData2(1, frag.data, frag.len, 0);
+            LMIC_setTxData2(69, frag.data, frag.len, 0);
             Serial.printf("[LORA] Enviando paquete de %d bytes.\n", frag.len);
 
             // 5. Espera a que el envío termine (la ISR de onEvent liberará el semáforo)
@@ -806,8 +956,12 @@ void setup() {
     // <<< CAMBIO: Aumenté ligeramente la memoria por el uso de printf
     xTaskCreatePinnedToCore(TaskDisplay, "DisplayTask", 2560, NULL, 1, NULL, 0);
 
-    // <<< ELIMINADO: Ya no es necesaria la inicialización del registro de eventos antiguo
-}
+    // --- Inicializa los mutex sensores externos ---
+    for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+        mutex_external_sensors[i] = xSemaphoreCreateMutex();
+        external_sensors[i].is_new = false; // Asegurarse de que inician como leídos
+    }
+}  
 
 void loop() {
     // El flujo principal está en las tareas (FreeRTOS).
