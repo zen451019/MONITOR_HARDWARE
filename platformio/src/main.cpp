@@ -251,7 +251,7 @@ static const u4_t DEVADDR = 0x260CB229;
 const lmic_pinmap lmic_pins = {
     .nss = 18,
     .rxtx = LMIC_UNUSED_PIN,
-    .rst = 14,
+    .rst = LMIC_UNUSED_PIN,
     .dio = {26, 33, 32}
 };
 
@@ -554,6 +554,7 @@ void TaskRegistroResultados(void *pvParameters) {
     (void)pvParameters;
     bufferResultados.index = 0;
     static uint8_t id_mensaje = 0;
+    static uint8_t ultima_bateria = 0xFF; // valor inicial "desconocido"
     unsigned long tiempo_ultima_muestra = 0;
     ExternalSensorData datos_externos_para_envio[MAX_SENSORES_EXTERNOS];
 
@@ -582,7 +583,14 @@ void TaskRegistroResultados(void *pvParameters) {
                     nivel_bateria = buffer_bateria[0].nivel_codificado;
                     index_bateria = 0;
                 }
+
+                if (nueva_bateria) {
+                    ultima_bateria = nivel_bateria;
+                }
                 xSemaphoreGive(mutex_bateria);
+
+
+
 
                 // <<< NUEVO: Recolectar datos de sensores externos >>>
                 //ExternalSensorData datos_externos_para_envio[MAX_SENSORES_EXTERNOS];
@@ -602,7 +610,7 @@ void TaskRegistroResultados(void *pvParameters) {
                     bufferResultados, 
                     id_mensaje, 
                     nueva_bateria, 
-                    nivel_bateria, 
+                    nueva_bateria ? nivel_bateria : ultima_bateria, 
                     RESULTADOS_POR_BLOQUE, 
                     true, // sistema_habilitado
                     datos_externos_para_envio, // <<< Pasamos los nuevos datos
