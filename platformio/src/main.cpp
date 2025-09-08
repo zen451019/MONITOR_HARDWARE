@@ -86,7 +86,9 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Fonts/TomThumb.h>   // fuente ultra pequeña
+#include <Fonts/Picopixel.h>
 
+// Logo de arranque (20x20px)
 const unsigned char epd_bitmap_ [] PROGMEM = {
   // 'Asset 3, 20x20px
     0x00, 0x00, 0x00, 0x07, 0xfe, 0x00, 0x1f, 0xff, 0x80, 0x3f, 0xff, 0xc0, 0x7e, 0x07, 0xe0, 0x78, 
@@ -151,11 +153,7 @@ struct DisplayInfo {
 };
 
 // <<< CAMBIO: Cola para enviar la información a la tarea de display.
-QueueHandle_t queueDisplayInfo; 
-// <<< ELIMINADO: Ya no necesitamos las variables globales antiguas para el LCD.
-// volatile EventoLCD eventos_lcd[NUM_EVENTOS_LCD];
-// volatile int idx_evento_lcd = 0;
-// volatile bool lcd_needs_update = false;
+QueueHandle_t queueDisplayInfo;
 
 
 // ==================== BATTERY LEVEL CONFIG ====================
@@ -335,15 +333,68 @@ struct BitPacker {
     }
 };
 
+// ===================== DISPLAY DATA =====================
+void updateDisplay(String systemStatus,float batteryVolt, 
+                  float volt1 = 0 , float volt2 = 0, float volt3 = 0, 
+                  float curr1 = 0, float curr2 = 0, float curr3 = 0) {
+    display.clearDisplay();
+    display.setTextColor(WHITE);
+    display.setTextSize(1);
+    display.setFont(&Picopixel);
+    display.setCursor(0, 4);
+    display.println("SISTEMA");
+    display.setCursor(0, 10);
+    display.println(systemStatus);
+    display.drawLine(0, 12, 128, 12, 1);
+    display.drawLine(64, 0, 64, 64, 1);
+    display.setCursor(68, 4);
+    display.println("BATTERY");
+    display.setCursor(68, 10);
+    display.print(batteryVolt, 1);
+    display.println(" V");
+    display.setFont(&Picopixel);
+    display.setCursor(2, 21);
+    display.println("VOLT_1");
+    display.setCursor(2, 28);
+    display.print(volt1, 1);
+    display.println("V");
+    display.setCursor(2, 38);
+    display.println("VOLT_2");
+    display.setCursor(2, 45);
+    display.print(volt2, 1);
+    display.println("V");
+    display.setCursor(2, 55);
+    display.println("VOLT_3");
+    display.setCursor(2, 62);
+    display.print(volt3, 1);
+    display.println("V");
+    display.setCursor(68, 21);
+    display.println("CURR_1");
+    display.setCursor(68, 28);
+    display.print(curr1, 1);
+    display.println("A");
+    display.setCursor(68, 38);
+    display.println("CURR_2");
+    display.setCursor(68, 45);
+    display.print(curr2, 1);
+    display.println("A");
+    display.setCursor(68, 55);
+    display.println("CURR_3");
+    display.setCursor(68, 62);
+    display.print(curr3, 1);
+    display.println("A");
+    display.display();
+}
+
 // ===================== CODIFICACIÓN UNIFICADA =====================
 void codificarUnificado(
     const BufferResultados& buffer,
     uint8_t id_mensaje,
-    bool nueva_bateria, // Necesitamos saber si la batería se debe enviar, no solo el nivel
+    bool nueva_bateria, // Solo se envía si hay nuevo valor
     uint8_t nivel_bateria,
     uint8_t data_len_rms, // ej: RESULTADOS_POR_BLOQUE
     bool sistema_habilitado,
-    const ExternalSensorData datos_externos[MAX_SENSORES_EXTERNOS], // Nuevos datos
+    const ExternalSensorData datos_externos[MAX_SENSORES_EXTERNOS],
     std::vector<Fragmento>& fragmentos
 ) {
     std::vector<uint8_t> payload;
@@ -352,57 +403,71 @@ void codificarUnificado(
     // ================== 1. CABECERA ==================
     payload.push_back(id_mensaje);
 
-    // Timestamp (si el sistema está activo, usamos el del buffer, si no, el actual)
+    // Timestamp
     unsigned long ts_s = (sistema_habilitado) ? (buffer.bloque[0].timestamp / 1000) : (millis() / 1000);
     payload.push_back((ts_s >> 24) & 0xFF);
     payload.push_back((ts_s >> 16) & 0xFF);
     payload.push_back((ts_s >> 8) & 0xFF);
     payload.push_back(ts_s & 0xFF);
 
-    // Construir Activate byte
+    // Construir Activate byte (nuevo orden)
+    // Bit 0: batería
+    // Bit 1: voltaje
+    // Bit 2: corriente
+    // Bit 3+: sensores externos
     uint8_t activate_byte = 0;
-    if (sistema_habilitado) {
-        // Asumimos que quieres enviar Voltaje y Corriente si el sistema está activo
-        // Bit 0: Voltaje, Bit 1: Corriente
-        activate_byte |= (1 << 0);
-        activate_byte |= (1 << 1);
-    }
-    // Añadir los sensores externos que tengan datos nuevos
+    if (nueva_bateria) activate_byte |= (1 << 0);
+    if (sistema_habilitado) activate_byte |= (1 << 1); // voltaje
+    if (sistema_habilitado) activate_byte |= (1 << 2); // corriente
     for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
-        if (datos_externos[i].is_new) {
-            activate_byte |= (1 << (i + 2)); // i=0 es sensor 2, i=1 es sensor 3, etc.
-        }
+        if (datos_externos[i].is_new) activate_byte |= (1 << (i + 3));
     }
     payload.push_back(activate_byte);
-    payload.push_back(nivel_bateria); // La batería siempre va
 
-    // ================== 2. DESCRIPTORES DE LONGITUD ==================
-    // Se añaden en orden de los bits de 'Activate'
-    if ((activate_byte >> 0) & 0x01) { // Voltaje
+    // ================== 2. DATOS SEGÚN ACTIVATE BYTE ==================
+    // Orden: batería, voltaje, corriente, sensores externos
+
+    // --- Batería ---
+    if (activate_byte & 0x01) { // Bit 0: batería
+        uint8_t len_byte = (0x01); // No packed, no extended
+        payload.push_back(len_byte);
+    }
+
+    // --- Voltaje ---
+    if (activate_byte & 0x02) { // Bit 1: voltaje
         uint8_t len_byte = (data_len_rms & 0x1F); // No packed, no extended
         payload.push_back(len_byte);
     }
-    if ((activate_byte >> 1) & 0x01) { // Corriente
+
+    // --- Corriente ---
+    if (activate_byte & 0x04) { // Bit 2: corriente
         uint8_t len_byte = 0x80 | (data_len_rms & 0x1F); // Packed, no extended
         payload.push_back(len_byte);
     }
+
+    // --- Sensores externos ---
     for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
-        if (datos_externos[i].is_new) {
+        if (activate_byte & (1 << (i + 3))) {
             uint8_t len_byte = 0;
             if (datos_externos[i].packed)   len_byte |= 0x80;
             if (datos_externos[i].extended) len_byte |= 0x40;
-            // Para datos simples, la longitud suele ser 1
-            len_byte |= (1 & 0x1F); 
+            len_byte |= (datos_externos[i].len & 0x1F);
             payload.push_back(len_byte);
         }
     }
 
     // ================== 3. BLOQUES DE DATOS ==================
     BitPacker packer;
-    // --- Datos de Voltaje (si está activo) ---
-    if ((activate_byte >> 0) & 0x01) {
-        // ASUNCIÓN: pin_configs[0,1,2] son voltajes. Se rellenan con 0 si no están.
-        const int pines_voltaje_idx[] = {0, 1, 2}; // Índices en pin_configs
+
+    // --- Batería ---
+    if (activate_byte & 0x01) {
+        // --- Datos de Batería (si está activo) ---
+        payload.push_back(nivel_bateria);
+    }
+
+    // --- Voltaje ---
+    if (activate_byte & 0x02) {
+        const int pines_voltaje_idx[] = {0, 1, 2};
         for (int ch = 0; ch < 3; ++ch) {
             int idx = pines_voltaje_idx[ch];
             for (int k = 0; k < data_len_rms; ++k) {
@@ -426,12 +491,12 @@ void codificarUnificado(
             }
             packer.push(valor, 10, payload);
         }
-        // Canales 2 y 3 (relleno con ceros)
-        for (int ch = 0; ch < 2; ++ch) {
-            for (int k = 0; k < data_len_rms; ++k) {
-                packer.push(0, 10, payload);
-            }
-        }
+        // Canales 2 y 3 (relleno con ceros)    
+        //for (int ch = 0; ch < 2; ++ch) {
+        //    for (int k = 0; k < data_len_rms; ++k) {
+        //        packer.push(0, 10, payload);
+        //    }
+        //}
         packer.flush(payload);
     }
     // --- Datos de Sensores Externos ---
@@ -679,9 +744,6 @@ void TaskRegistroResultados(void *pvParameters) {
                 for (auto& f : frags) {
                     xQueueSend(queueFragmentos, &f, portMAX_DELAY);
                 }
-                //for (auto& f : frags) {
-                //    xQueueSend(queueFragmentos, &f, portMAX_DELAY);
-                //}
 
                 // <<< CAMBIO: Preparar y enviar datos a la tarea de display (solo batería)
                 DisplayInfo info = {};
@@ -772,54 +834,19 @@ void TaskDisplay(void *pvParameters) {
     // Buffer local para mantener el historial de los últimos envíos
     static DisplayInfo historial_display[NUM_EVENTOS_LCD];
     static int idx_historial = 0;
+    static DisplayInfo ultimo_evento = {};
 
     while (true) {
-        DisplayInfo nuevo_evento;
-        // Espera bloqueante hasta que llegue nueva información para mostrar
-        if (xQueueReceive(queueDisplayInfo, &nuevo_evento, portMAX_DELAY) == pdTRUE) {
-            
-            // Añade el nuevo evento al historial circular
-            historial_display[idx_historial] = nuevo_evento;
-            idx_historial = (idx_historial + 1) % NUM_EVENTOS_LCD;
-
-            // Actualiza la pantalla completa
-            display.clearDisplay();
-
-            // 1. Estado del sistema
-            display.setCursor(0, 0);
-            display.setTextSize(2);
-            display.print(sistema_habilitado ? "ACTIVO" : "INACTIVO");
-
-            // 2. Título de la sección de eventos
-            display.setTextSize(1);
-            display.setCursor(0, 20);
-            display.print("Ultimos envios LoRa:");
-
-            // 3. Itera sobre el historial para mostrar los eventos (del más nuevo al más viejo)
-            int pos_actual = (idx_historial - 1 + NUM_EVENTOS_LCD) % NUM_EVENTOS_LCD;
-            for (int i = 0; i < NUM_EVENTOS_LCD; i++) {
-                display.setCursor(0, 32 + i * 10);
-                DisplayInfo &evento = historial_display[pos_actual];
-
-                // Si el timestamp es 0, es un registro vacío, no lo mostramos
-                if (evento.timestamp_s > 0) {
-                    if (evento.sistema_activo) {
-                        display.printf("A T:%lus C:%.1fA V:%.0fV",
-                                       evento.timestamp_s % 1000, // Mostramos últimos 3 dígitos para ahorrar espacio
-                                       evento.primer_valor_corriente,
-                                       evento.primer_valor_voltaje1);
-                    } else { // Sistema inactivo, solo reportó batería
-                         display.printf("I T:%lus Bat:%.1fV",
-                                       evento.timestamp_s % 1000,
-                                       evento.valor_bateria);
-                    }
-                }
-                
-                // Moverse al siguiente evento más antiguo en el buffer circular
-                pos_actual = (pos_actual - 1 + NUM_EVENTOS_LCD) % NUM_EVENTOS_LCD;
-            }
-
-            display.display();
+        if (xQueueReceive(queueDisplayInfo, &ultimo_evento, portMAX_DELAY) == pdTRUE) {
+            String systemStatus = ultimo_evento.sistema_activo ? "ACTIVO" : "INACTIVO";
+            float batteryVolt = ultimo_evento.bateria_incluida ? ultimo_evento.valor_bateria : 0;
+            float volt1 = ultimo_evento.sistema_activo ? ultimo_evento.primer_valor_voltaje1 : 0;
+            float volt2 = 0;
+            float volt3 = 0;
+            float curr1 = ultimo_evento.sistema_activo ? ultimo_evento.primer_valor_corriente : 0;
+            float curr2 = 0;
+            float curr3 = 0;
+            updateDisplay(systemStatus, batteryVolt, volt1, volt2, volt3, curr1, curr2, curr3);
         }
     }
 }
