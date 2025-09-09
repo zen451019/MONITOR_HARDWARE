@@ -46,7 +46,68 @@ The firmware operates as a data pipeline managed by several concurrent FreeRTOS 
 	
 	5. The final payload is placed in a queue (`queueFragmentos`) to be sent by LoRaWAN, and a summary is sent to the display task.
 
+#### Payload Structure and Encoding
 
+The NEMO firmware uses a highly optimized binary encoding scheme to maximize data transmission efficiency over LoRaWAN. This section describes the payload structure to facilitate decoder implementation.
+
+**Payload Components:**
+
+- **Header (1 byte):** Contains the message identifier, allowing the system to keep a clear order of the messages received.
+- **Timestamp (4 bytes):** System startup timestamp in UNIX format.
+- **Activate byte (1byte):** Flags indicating sensor operation encoded in each bit of the byte (0 = battery, 1 = voltage, 2 = current), the rest reserved for future sensors.
+- **Data length bytes (dependent on Activate byte):** These bytes define the length and encoding format for each active sensor type. The number of Data Length bytes equals the number of active sensors indicated in the Activate byte.
+
+	##### Byte Structure (8 bits total):
+	
+	```
+	Bit 7 | Bit 6 | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0
+	------|-------|-------|-------|-------|-------|-------|-------
+	PKD   | 2BIT  |       |        DATA_LENGTH (5 bits)         
+	```    
+	
+	##### Bit Field Descriptions:
+	
+	**Bits 0-4 (DATA_LENGTH):** Number of sensor readings (0-31 samples)
+	
+	**Bit 6 (2BIT Flag):**
+	
+	- `0`: Standard encoding (1-bit per sample)
+	- `1`: 2-bit encoding per sample
+	
+	**Bit 7 (PKD - Packed Flag):**
+	
+	- `0`: Byte-aligned format
+	-  `1`: Bit-packed format
+	
+	##### Byte Order:
+	
+	Data Length bytes follow the same order as the Activate byte flags (LSB to MSB):
+	
+	- **Bit 0:** Battery (if active)
+	- **Bit 1:** Voltage (if active)
+	- **Bit 2:** Current (if active)
+	
+	**Example:** If Activate byte = `0x06` (voltage + current active), you'll have 2 Data Length bytes: first for voltage, second for current.
+
+- **Data bytes:** bytes with sensor data; both the active byte and data length bytes are necessary to decode this data.
+
+#### Bit Packing Process
+When the PKD (Packed) flag is set, NEMO uses a custom bit-packing algorithm to maximize data efficiency. The process packs 10-bit sensor values sequentially into a continuous bit stream, eliminating the typical byte-alignment padding.
+
+**Packing Method:**
+- Each sensor reading is stored as exactly 10 bits (range 0-1023)
+- Values are packed sequentially without byte boundaries
+- A custom `BitPacker` class handles the bit-level operations
+- Result: ~25% space savings compared to standard 16-bit storage
+
+**Example:** 3 samples with values [512, 1023, 256]
+
+```c++
+Standard:  [0x02,0x00] [0x03,0xFF] [0x01,0x00]  = 6 bytes
+Bit-packed: [0x80,0x0F,0xFF,0x00,0x10]        = 4 bytes (30 bits)
+```
+
+This efficient packing allows more sensor data per LoRaWAN frame while maintaining full 10-bit precision.
 ### 4. Support Tasks
 
 - `tareaLoRa`: Task dedicated to managing the LoRaWAN communication stack (LMIC). It is a consumer that waits patiently in the `queueFragmentos` queue to send data as soon as it is ready.
