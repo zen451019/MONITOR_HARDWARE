@@ -122,9 +122,9 @@ const unsigned char epd_bitmap_[] PROGMEM = {
 
 // ==================== DEFINES / PARÁMETROS ====================
 // Parámetros del display
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_RESET -1 // El pin reset no está conectado en el TTGO
+constexpr int SCREEN_WIDTH = 128;
+constexpr int SCREEN_HEIGHT = 64;
+constexpr int OLED_RESET = -1;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 #define MONITOR_PIN 35
@@ -133,6 +133,7 @@ volatile bool sistema_habilitado = false;
 // ==================== PARÁMETROS DEL PIN_ACTIVACIÓN ====================
 
 // ==================== PARÁMETROS DEL SISTEMA ====================
+// Valores por defecto - pueden ser sobrescritos desde platformio.ini usando build_flags
 #ifndef FS_HZ
 #define FS_HZ 960
 #endif
@@ -143,10 +144,15 @@ volatile bool sistema_habilitado = false;
 #define PROCESS_PERIOD_MS 300
 #endif
 
-#define NUM_PINES 4
-#define RESULTADOS_POR_BLOQUE 20
+// Constantes internas optimizadas (usando los valores definidos arriba)
+constexpr int SYSTEM_FS_HZ = FS_HZ;
+constexpr float SYSTEM_EMA_ALPHA = EMA_ALPHA;
+constexpr int SYSTEM_PROCESS_PERIOD_MS = PROCESS_PERIOD_MS;
 
-#define LORA_PAYLOAD_MAX 220 // Payload máximo para DR3
+constexpr int NUM_PINES = 4;
+constexpr int RESULTADOS_POR_BLOQUE = 20;
+
+constexpr size_t LORA_PAYLOAD_MAX = 220; // Payload máximo para DR3
 
 // ==================== REGISTRO PARA LCD (NUEVA ESTRUCTURA)
 // ====================
@@ -208,15 +214,15 @@ typedef struct
     SemaphoreHandle_t mutex;
 } BufferResultados;
 
-// FIFO y sumas para cada pin
+// FIFO y sumas para cada pin (OPTIMIZADO)
 #define FIFO_SIZE 320
 struct RMS_FIFO
 {
     uint16_t buffer[FIFO_SIZE];
     int head;
     int count;
-    double sum_x;
-    double sum_x2;
+    uint32_t sum_x;    // Cambio de double a uint32_t
+    uint64_t sum_x2;   // Cambio de double a uint64_t para evitar overflow
 };
 RMS_FIFO fifo_pins[NUM_PINES];
 
@@ -283,7 +289,7 @@ SemaphoreHandle_t semaforoEnvio;
 // ==================== FUNCIONES DE PROCESAMIENTO ====================
 float applyEMA_original(float input, float &previous_output)
 {
-    previous_output = EMA_ALPHA * input + (1.0f - EMA_ALPHA) * previous_output;
+    previous_output = SYSTEM_EMA_ALPHA * input + (1.0f - SYSTEM_EMA_ALPHA) * previous_output;
     return previous_output;
 }
 
@@ -571,17 +577,22 @@ void codificarUnificado(
     fragmentos.push_back(f);
 }
 
-// ===================== ISR de muestreo ADC =====================
+// ===================== ISR de muestreo ADC (OPTIMIZADA) =====================
 hw_timer_t *adcTimer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 volatile int isr_pin_index = 0;
 volatile int num_pines_activos = 0;
 
-// Cálculo RMS usando sumas acumuladas FIFO
+// Array optimizado con solo los índices de pines activos
+volatile int active_pins[NUM_PINES];
+volatile int num_active_pins = 0;
+
+// Cálculo RMS usando sumas acumuladas FIFO (OPTIMIZADO)
 float calculateRMS_fifo(const RMS_FIFO &fifo, float gain = 1.0f)
 {
     int cnt;
-    double sx, sx2;
+    uint32_t sx;
+    uint64_t sx2;
 
     portENTER_CRITICAL(&timerMux);
     cnt = fifo.count;
@@ -591,10 +602,14 @@ float calculateRMS_fifo(const RMS_FIFO &fifo, float gain = 1.0f)
 
     if (cnt <= 0)
         return NAN;
-    double mean = sx / cnt;
-    double var = (sx2 / cnt) - (mean * mean);
+        
+    // Conversión a double solo cuando es necesario para el cálculo final
+    double mean = (double)sx / cnt;
+    double var = ((double)sx2 / cnt) - (mean * mean);
+    
     if (var < 0)
         var = 0; // clamp por errores numéricos
+        
     double rms = sqrt(var) * (3.3 / 4095.0);
     return (float)(rms * gain);
 }
@@ -602,56 +617,68 @@ float calculateRMS_fifo(const RMS_FIFO &fifo, float gain = 1.0f)
 void actualizarNumPinesActivos()
 {
     num_pines_activos = 0;
+    num_active_pins = 0;
+    
+    // Crear array optimizado de solo los pines activos
     for (int i = 0; i < NUM_PINES; i++)
     {
         if (pin_configs[i].enabled)
+        {
+            active_pins[num_active_pins++] = i;
             num_pines_activos++;
+        }
     }
+    
+    // Reiniciar el índice si es necesario
+    if (isr_pin_index >= num_active_pins)
+        isr_pin_index = 0;
 }
 
 void IRAM_ATTR onADCTimer()
 {
-    portENTER_CRITICAL_ISR(&timerMux);
-    if (!sistema_habilitado || num_pines_activos == 0)
-    {
-        portEXIT_CRITICAL_ISR(&timerMux);
+    // Verificación rápida sin sección crítica
+    if (!sistema_habilitado || num_active_pins == 0)
         return;
-    }
-    // Busca el siguiente pin activo
-    int intentos = 0;
-    while (!pin_configs[isr_pin_index].enabled && intentos < NUM_PINES)
+    
+    // Obtener el índice del pin actual de forma optimizada
+    int current_pin_idx = active_pins[isr_pin_index];
+    
+    // Lectura ADC fuera de sección crítica (más rápido)
+    uint16_t val = pin_configs[current_pin_idx].reader.readRaw();
+    
+    // Sección crítica mínima solo para actualizar el FIFO
+    portENTER_CRITICAL_ISR(&timerMux);
+    
+    RMS_FIFO &fifo = fifo_pins[current_pin_idx];
+    int h = fifo.head;
+    
+    // Optimización: usar enteros en lugar de double para sum_x2
+    if (fifo.count == FIFO_SIZE)
     {
-        isr_pin_index = (isr_pin_index + 1) % NUM_PINES;
-        intentos++;
+        uint16_t old = fifo.buffer[h];
+        fifo.sum_x -= old;
+        fifo.sum_x2 -= (uint32_t)old * old; // Cambio a uint32_t
     }
-    if (pin_configs[isr_pin_index].enabled)
+    else
     {
-        uint16_t val = pin_configs[isr_pin_index].reader.readRaw();
-        RMS_FIFO &fifo = fifo_pins[isr_pin_index];
-        int h = fifo.head;
-        if (fifo.count == FIFO_SIZE)
-        {
-            uint16_t old = fifo.buffer[h];
-            fifo.sum_x -= old;
-            fifo.sum_x2 -= (double)old * old;
-        }
-        else
-        {
-            fifo.count++;
-        }
-        fifo.buffer[h] = val;
-        fifo.sum_x += val;
-        fifo.sum_x2 += (double)val * val;
-        fifo.head = (h + 1) % FIFO_SIZE;
+        fifo.count++;
     }
-    isr_pin_index = (isr_pin_index + 1) % NUM_PINES;
+    
+    fifo.buffer[h] = val;
+    fifo.sum_x += val;
+    fifo.sum_x2 += (uint32_t)val * val; // Cambio a uint32_t
+    fifo.head = (h + 1) % FIFO_SIZE;
+    
+    // Avanzar al siguiente pin activo (sin búsqueda)
+    isr_pin_index = (isr_pin_index + 1) % num_active_pins;
+    
     portEXIT_CRITICAL_ISR(&timerMux);
 }
 
 void TaskProcesamiento(void *pvParameters)
 {
     TickType_t lastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(PROCESS_PERIOD_MS);
+    const TickType_t xFrequency = pdMS_TO_TICKS(SYSTEM_PROCESS_PERIOD_MS);
 
     while (true)
     {
@@ -868,10 +895,12 @@ void TaskBatteryLevel(void *pvParameters)
     ESP32AnalogRead adc;
     adc.attach(BATTERY_PIN);
     const float voltage_divider_ratio = 51.0f / 11.0f;
+    const TickType_t xFrequency = pdMS_TO_TICKS(BATTERY_INTERVAL_MS);
+    TickType_t xLastWakeTime = xTaskGetTickCount();
 
     while (true)
     {
-        vTaskDelay(pdMS_TO_TICKS(BATTERY_INTERVAL_MS));
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
         // Leer ADC y escalar (ejemplo genérico: divisor para 15V)
         uint16_t raw = adc.readRaw();
@@ -963,11 +992,6 @@ void TaskDisplay(void *pvParameters)
             // Llamamos a la función de actualización con todos los datos
             updateDisplay(systemStatus, ultimo_valor_bateria, current_info.timestamp_s, volt1, curr1);
         }
-
-        // IMPORTANTE: Ceder tiempo de CPU para dar estabilidad al sistema.
-        // Un pequeño retardo aquí previene que la tarea de display consuma el 100%
-        // de los recursos si recibe datos muy rápido.
-        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -1034,7 +1058,7 @@ void tareaLoRa(void *pvParameters)
 
             // 4. Envía los datos
             LMIC_setTxData2(69, frag.data, frag.len, 0);
-            Serial.printf("[LORA] Enviando paquete de %d bytes.\n", frag.len);
+            // Serial.printf("[LORA] Enviando paquete de %d bytes.\n", frag.len); // ELIMINADO: Puede causar inestabilidad
 
             // 5. Espera a que el envío termine (la ISR de onEvent liberará el
             // semáforo)
@@ -1050,16 +1074,14 @@ void tareaLoRa(void *pvParameters)
     }
 }
 
-void TaskMonitorPin(void *pvParameters)
-{
-    pinMode(
-        MONITOR_PIN,
-        INPUT_PULLUP); // <<< CAMBIO: Usar PULLUP interno si es un switch a GND
-    while (true)
-    {
-        // Asumiendo que un switch a GND activa el sistema (LOW = ACTIVO)
+// ===================== ISR para el pin de monitoreo =====================
+volatile unsigned long last_interrupt_time = 0;
+
+void IRAM_ATTR monitorPinISR() {
+    unsigned long interrupt_time = xTaskGetTickCountFromISR(); // Versión segura para ISR
+    if (interrupt_time - last_interrupt_time > pdMS_TO_TICKS(50)) { // 50ms debounce
         sistema_habilitado = (digitalRead(MONITOR_PIN) == LOW);
-        vTaskDelay(pdMS_TO_TICKS(100));
+        last_interrupt_time = interrupt_time;
     }
 }
 
@@ -1113,7 +1135,7 @@ void setup()
     isr_pin_index = 0;
 
     // --- Configuración del timer ADC ---
-    int freq_isr = FS_HZ * num_pines_activos;
+    int freq_isr = SYSTEM_FS_HZ * num_active_pins; // Usar num_active_pins optimizado
     if (freq_isr < 1)
         freq_isr = 1; // Frecuencia mínima de 1 Hz
     adcTimer =
@@ -1134,8 +1156,10 @@ void setup()
                             0);
 
     // --- Tarea de monitor del pin ON/OFF ---
-    xTaskCreatePinnedToCore(TaskMonitorPin, "MonitorPinTask", 2048, NULL, 1, NULL,
-                            0);
+    pinMode(MONITOR_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(MONITOR_PIN), monitorPinISR, CHANGE);
+    // Leer estado inicial
+    sistema_habilitado = (digitalRead(MONITOR_PIN) == LOW);
 
     // --- Inicialización y tarea LoRa ---
     initLoRa();
