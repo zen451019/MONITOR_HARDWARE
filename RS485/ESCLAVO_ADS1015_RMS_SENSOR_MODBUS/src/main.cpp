@@ -1,18 +1,30 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_ADS1X15.h>
+#include "HardwareSerial.h"
+#include "ModbusServerRTU.h"
 
 // =================================================================
-// --- CONFIGURACIÓN DEL SISTEMA ---
+// --- CONFIGURACIÓN COMBINADA ---
 // =================================================================
+// Configuración ADS1015
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 #define ADS_ALERT_PIN 4
- 
 const int NUM_CHANNELS = 3;
 const int FIFO_SIZE = 320;
 const int PROCESS_INTERVAL_MS = 300;
 const int RMS_HISTORY_SIZE = 100;
+
+// Configuración Modbus
+#define SLAVE_ID 1
+#define NUM_REGISTERS 15  // 5 por canal (3 canales x 5 = 15)
+#define RX_PIN 16
+#define TX_PIN 17
+const int MODBUS_UPDATE_INTERVAL_MS = 300;
+
+// Factor para convertir float RMS a uint16_t
+const float CONVERSION_FACTOR = 100.0f;
 
 // =================================================================
 // --- ESTRUCTURAS DE DATOS Y VARIABLES GLOBALES ---
@@ -35,18 +47,25 @@ struct RMS_FIFO {
 };
 RMS_FIFO fifos[NUM_CHANNELS];
 
-// --- Buffers circulares (arrays) para el historial de RMS ---
+// Buffers circulares para historial de RMS
 float rms_history_ch0[RMS_HISTORY_SIZE];
 float rms_history_ch1[RMS_HISTORY_SIZE];
 float rms_history_ch2[RMS_HISTORY_SIZE];
-volatile int rms_history_head = 0; // Puntero a la PRÓXIMA posición a escribir
-SemaphoreHandle_t rms_history_mutex; // Mutex para proteger el acceso
+volatile int rms_history_head = 0;
+SemaphoreHandle_t rms_history_mutex;
 
+// Variables para ADC
 volatile bool adc_data_ready = false;
 volatile uint8_t current_isr_channel = 0;
 
+// Variables para Modbus
+ModbusServerRTU MBserver(2000);
+uint16_t holdingRegisters[NUM_REGISTERS];
+SemaphoreHandle_t dataMutex;
+TaskHandle_t dataUpdateTaskHandle;
+
 // =================================================================
-// --- TAREAS Y FUNCIONES (Idénticas a la v3) ---
+// --- FUNCIONES DEL PRIMER CÓDIGO (ADC y RMS) ---
 // =================================================================
 void IRAM_ATTR on_adc_data_ready() { adc_data_ready = true; }
 
@@ -103,20 +122,9 @@ void task_procesamiento(void *pvParameters) {
     }
 }
 
-// =================================================================
-// --- FUNCIÓN DE AYUDA PARA TU TAREA FUTURA ---
-// =================================================================
-
-/**
- * @brief Obtiene los últimos 'count' valores de historial para un canal.
- * @param channel El canal a consultar (0, 1, o 2).
- * @param output_buffer Un array donde se guardarán los resultados.
- * @param count El número de valores a obtener (debe ser <= que el tamaño del buffer).
- * @return El número de valores realmente copiados.
- */
 int get_rms_history(int channel, float* output_buffer, int count) {
     if (count > RMS_HISTORY_SIZE || channel < 0 || channel >= NUM_CHANNELS) {
-        return 0; // Petición inválida
+        return 0;
     }
 
     float* source_buffer;
@@ -128,84 +136,126 @@ int get_rms_history(int channel, float* output_buffer, int count) {
     }
 
     if (xSemaphoreTake(rms_history_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        // El 'head' apunta a la próxima posición a escribir (la más antigua).
-        // El dato más reciente está en la posición justo anterior al 'head'.
         int most_recent_idx = (rms_history_head == 0) ? (RMS_HISTORY_SIZE - 1) : (rms_history_head - 1);
-
-        // Copiamos los datos al buffer de salida en el orden que tú quieres:
-        // El más antiguo de la selección en la posición [0] y el más reciente en la [count-1].
         for (int i = 0; i < count; i++) {
-            // Índice en el buffer de origen (circular)
             int source_idx = (most_recent_idx - (count - 1 - i) + RMS_HISTORY_SIZE) % RMS_HISTORY_SIZE;
-            // Índice en el buffer de destino (lineal)
             output_buffer[i] = source_buffer[source_idx];
         }
-
         xSemaphoreGive(rms_history_mutex);
         return count;
     }
-    
-    return 0; // No se pudo obtener el mutex
+    return 0;
 }
 
+// =================================================================
+// --- FUNCIONES DEL SEGUNDO CÓDIGO (Modbus) ---
+// =================================================================
+// Tarea de actualización de datos
+void dataUpdateTask(void *pvParameters) {
+    Serial.println("Tarea de actualización de datos iniciada en el Núcleo 0.");
+    while (true) {
+        if (xSemaphoreTake(dataMutex, portMAX_DELAY) == pdTRUE) {
+            // Obtener los últimos 5 RMS de cada canal
+            float rms_ch0[5], rms_ch1[5], rms_ch2[5];
+            int count0 = get_rms_history(0, rms_ch0, 5);
+            int count1 = get_rms_history(1, rms_ch1, 5);
+            int count2 = get_rms_history(2, rms_ch2, 5);
+
+            // Llenar holdingRegisters con los valores convertidos (uint16_t)
+            for (int i = 0; i < 5; i++) {
+                holdingRegisters[i] = (count0 > i) ? (uint16_t)(rms_ch0[i] * CONVERSION_FACTOR) : 0;
+                holdingRegisters[5 + i] = (count1 > i) ? (uint16_t)(rms_ch1[i] * CONVERSION_FACTOR) : 0;
+                holdingRegisters[10 + i] = (count2 > i) ? (uint16_t)(rms_ch2[i] * CONVERSION_FACTOR) : 0;
+            }
+
+            xSemaphoreGive(dataMutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(MODBUS_UPDATE_INTERVAL_MS));
+    }
+}
+
+ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
+    uint16_t address, words;
+    ModbusMessage response;
+
+    request.get(2, address);
+    request.get(4, words);
+
+    if (address >= NUM_REGISTERS || (address + words) > NUM_REGISTERS) {
+        response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+        return response;
+    }
+
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+        for (uint16_t i = 0; i < words; ++i) {
+            response.add(holdingRegisters[address + i]);
+        }
+        xSemaphoreGive(dataMutex);
+    } else {
+        response.setError(request.getServerID(), request.getFunctionCode(), SERVER_DEVICE_BUSY);
+    }
+    return response;
+}
 
 // =================================================================
 // --- SETUP Y LOOP ---
 // =================================================================
-
 void setup() {
     Serial.begin(115200);
     Serial.println("\n\n===================================");
-    Serial.println("Iniciando Procesador RMS con ADS1015 (v4 - Con Función de Ayuda)");
+    Serial.println("Iniciando Sistema Combinado: ADS1015 + Esclavo Modbus RMS");
     Serial.println("===================================");
 
+    // Inicializar I2C y ADS1015
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, 400000L);
-    if (!ads.begin()) { while (1); }
+    if (!ads.begin()) { Serial.println("ERROR: ADS1015 no encontrado."); while (1); }
     ads.setGain(GAIN_TWOTHIRDS);
     ads.setDataRate(RATE_ADS1015_3300SPS);
 
+    // Inicializar Serial2 para Modbus
+    RTUutils::prepareHardwareSerial(Serial2);
+    Serial2.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN);
+
+    // Crear colas y mutexes
     queue_adc_samples = xQueueCreate(FIFO_SIZE, sizeof(ADC_Sample));
     rms_history_mutex = xSemaphoreCreateMutex();
-    
+    dataMutex = xSemaphoreCreateMutex();
+    if (!rms_history_mutex || !dataMutex) {
+        Serial.println("ERROR: No se pudieron crear los mutexes.");
+        while (1);
+    }
+
+    // Configurar interrupción ADS
     pinMode(ADS_ALERT_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(ADS_ALERT_PIN), on_adc_data_ready, FALLING);
     ads.startComparator_SingleEnded(0, 1000);
 
-    xTaskCreatePinnedToCore(task_adquisicion, "TaskAdquisicion", 4096, NULL, 5, NULL, 1);
-    xTaskCreatePinnedToCore(task_procesamiento, "TaskProcesamiento", 4096, NULL, 3, NULL, 0);
+    // Registrar worker Modbus
+    MBserver.registerWorker(SLAVE_ID, READ_HOLD_REGISTER, &readHoldingRegistersWorker);
+
+    // Crear tareas
+    xTaskCreatePinnedToCore(task_adquisicion, "TaskAdquisicion", 4096, NULL, 5, NULL, 1);  // Núcleo 1
+    xTaskCreatePinnedToCore(task_procesamiento, "TaskProcesamiento", 4096, NULL, 3, NULL, 0);  // Núcleo 0
+    MBserver.begin(Serial2, 0);  // Modbus en Núcleo 0
+    xTaskCreatePinnedToCore(dataUpdateTask, "DataUpdateTask", 2048, NULL, 1, &dataUpdateTaskHandle, 0);  // Núcleo 0
 
     Serial.println("INFO: Setup completado.");
 }
 
 void loop() {
+    // Loop libre en Núcleo 1
     vTaskDelay(pdMS_TO_TICKS(5000));
+    Serial.println("Loop principal activo...");
 
-    Serial.println("\n--- DEMOSTRACIÓN PARA LA TAREA FUTURA ---");
-
-    // --- Quiero los 5 datos más recientes del canal 1 ---
-    const int num_datos_deseados = 5;
-    float mis_datos[num_datos_deseados];
-
-    int datos_obtenidos = get_rms_history(1, mis_datos, num_datos_deseados);
-
-    const float FACTOR_ADC_TO_VOLTIOS = 6.144 / 2048.0;
-
-    if (datos_obtenidos > 0) {
-        Serial.printf("Se obtuvieron %d datos del historial del Canal 1 (en voltios):\n", datos_obtenidos);
-        for (int i = 0; i < datos_obtenidos; i++) {
-            float voltios = mis_datos[i] * FACTOR_ADC_TO_VOLTIOS;
-            Serial.printf("  mi_array[%d] = %.3f V\n", i, voltios);
+    // Demo: Mostrar algunos valores RMS (opcional, para debug)
+    const int num_datos = 5;
+    float datos_ch1[num_datos];
+    int obtenidos = get_rms_history(1, datos_ch1, num_datos);
+    if (obtenidos > 0) {
+        Serial.printf("Últimos %d RMS del Canal 1 (en unidades ADC):\n", obtenidos);
+        for (int i = 0; i < obtenidos; i++) {
+            Serial.printf("  %.3f\n", datos_ch1[i]);
         }
-        float voltios_reciente = mis_datos[datos_obtenidos - 1] * FACTOR_ADC_TO_VOLTIOS;
-        Serial.printf("-> El dato más reciente (mis_datos[%d]) es: %.3f V\n", datos_obtenidos - 1, voltios_reciente);
-    } else {
-        Serial.println("No se pudieron obtener los datos del historial.");
-    }
-
-    // --- Quiero solo el dato más reciente del canal 0 ---
-    float dato_unico[1];
-    if (get_rms_history(0, dato_unico, 1) > 0) {
-        float voltios = dato_unico[0] * FACTOR_ADC_TO_VOLTIOS;
-        Serial.printf("\nEl valor más reciente del Canal 0 es: %.3f V\n", voltios);
     }
 }
