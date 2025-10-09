@@ -1,23 +1,19 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <Adafruit_ADS1X15.h>
+#include <Wire.h>  // Keep for potential future use, but not used in simulation
 #include "HardwareSerial.h"
 #include "ModbusServerRTU.h"
 
 // =================================================================
 // --- CONFIGURACIÓN COMBINADA ---
 // =================================================================
-// Configuración ADS1015
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
-#define ADS_ALERT_PIN 4
+// Configuración simulada (sin ADS1015)
 const int NUM_CHANNELS = 3;
 const int FIFO_SIZE = 320;
 const int PROCESS_INTERVAL_MS = 300;
 const int RMS_HISTORY_SIZE = 100;
 
 // Configuración Modbus
-#define SLAVE_ID 1
+#define SLAVE_ID 2  // Cambiado a 2
 #define NUM_REGISTERS 45  // 5 por canal (3 canales x 5 = 15)
 #define RX_PIN 16
 #define TX_PIN 17
@@ -29,8 +25,6 @@ const float CONVERSION_FACTOR = 100.0f;
 // =================================================================
 // --- ESTRUCTURAS DE DATOS Y VARIABLES GLOBALES ---
 // =================================================================
-Adafruit_ADS1015 ads;
-
 struct ADC_Sample {
     int16_t value;
     uint8_t channel;
@@ -54,10 +48,6 @@ float rms_history_ch2[RMS_HISTORY_SIZE];
 volatile int rms_history_head = 0;
 SemaphoreHandle_t rms_history_mutex;
 
-// Variables para ADC
-volatile bool adc_data_ready = false;
-volatile uint8_t current_isr_channel = 0;
-
 // Variables para Modbus
 ModbusServerRTU MBserver(2000);
 uint16_t holdingRegisters[NUM_REGISTERS];
@@ -65,20 +55,20 @@ SemaphoreHandle_t dataMutex;
 TaskHandle_t dataUpdateTaskHandle;
 
 // =================================================================
-// --- FUNCIONES DEL PRIMER CÓDIGO (ADC y RMS) ---
+// --- FUNCIONES SIMULADAS (Sin ADC real) ---
 // =================================================================
-void IRAM_ATTR on_adc_data_ready() { adc_data_ready = true; }
-
 void task_adquisicion(void *pvParameters) {
-    ads.startADCReading(ADS1X15_REG_CONFIG_MUX_SINGLE_0, false);
+    // Simula la adquisición generando valores aleatorios para cada canal
+    // En lugar de leer del ADC, genera datos simulados (ruido aleatorio entre -2048 y 2047)
     while (true) {
-        if (adc_data_ready) {
-            adc_data_ready = false;
-            ADC_Sample sample = {ads.getLastConversionResults(), current_isr_channel};
+        for (uint8_t ch = 0; ch < NUM_CHANNELS; ch++) {
+            // Generar valor simulado (puedes cambiar a sinusoidal o lo que prefieras)
+            int16_t simulated_value = random(0, 2047);
+            ADC_Sample sample = {simulated_value, ch};
             xQueueSend(queue_adc_samples, &sample, 0);
-            current_isr_channel = (current_isr_channel + 1) % NUM_CHANNELS;
-            ads.startADCReading(ADS1X15_REG_CONFIG_MUX_SINGLE_0 + current_isr_channel, false);
-        } else { vTaskDelay(1); }
+            // Pequeño delay para simular el tiempo entre lecturas por canal
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 }
 
@@ -212,14 +202,8 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
 void setup() {
     Serial.begin(115200);
     Serial.println("\n\n===================================");
-    Serial.println("Iniciando Sistema Combinado: ADS1015 + Esclavo Modbus RMS");
+    Serial.println("Iniciando Sistema Simulado: Sin ADC + Esclavo Modbus RMS (Slave ID 2)");
     Serial.println("===================================");
-
-    // Inicializar I2C y ADS1015
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, 400000L);
-    if (!ads.begin()) { Serial.println("ERROR: ADS1015 no encontrado."); while (1); }
-    ads.setGain(GAIN_TWOTHIRDS);
-    ads.setDataRate(RATE_ADS1015_3300SPS);
 
     // Inicializar Serial2 para Modbus
     RTUutils::prepareHardwareSerial(Serial2);
@@ -233,11 +217,6 @@ void setup() {
         Serial.println("ERROR: No se pudieron crear los mutexes.");
         while (1);
     }
-
-    // Configurar interrupción ADS
-    pinMode(ADS_ALERT_PIN, INPUT);
-    attachInterrupt(digitalPinToInterrupt(ADS_ALERT_PIN), on_adc_data_ready, FALLING);
-    ads.startComparator_SingleEnded(0, 1000);
 
     // Registrar worker Modbus
     MBserver.registerWorker(SLAVE_ID, READ_HOLD_REGISTER, &readHoldingRegistersWorker);

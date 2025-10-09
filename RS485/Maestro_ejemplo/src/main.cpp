@@ -20,7 +20,7 @@
 #define SLAVE_ID 1
 #define SLAVE_ID_2 2
 #define START_ADDRESS 0
-#define NUM_REGISTERS 15
+#define NUM_REGISTERS 45
 #define REQUEST_INTERVAL 6000 // Intervalo de petición en milisegundos (6 segundos)
 
 // Pines para el conversor RS485 (RX, TX)
@@ -95,7 +95,7 @@ void loop() {
     }
     requestToken++; // Incrementar el token DESPUÉS de la primera petición
 
-    // --- Petición para el Esclavo 2 ---
+        // --- Petición para el Esclavo 2 ---
     Serial.printf("\nEnviando petición al Esclavo 2 (Token %u)...", requestToken);
     Error err_2 = MB.addRequest(requestToken, SLAVE_ID_2, READ_HOLD_REGISTER, START_ADDRESS, NUM_REGISTERS);
     if (err_2 != SUCCESS) {
@@ -103,5 +103,6 @@ void loop() {
       Serial.printf("Error al crear petición 2: %02X - %s\n", (int)e, (const char *)e);
     }
     requestToken++; // Incrementar el token DESPUÉS de la segunda petición
+
   }
 }
