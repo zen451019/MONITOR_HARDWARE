@@ -14,7 +14,7 @@ const int RMS_HISTORY_SIZE = 100;
 
 // Configuración Modbus
 #define SLAVE_ID 2  // Cambiado a 2
-#define NUM_REGISTERS 45  // 5 por canal (3 canales x 5 = 15)
+#define NUM_REGISTERS 60  // 5 por canal (3 canales x 5 = 15)
 #define RX_PIN 16
 #define TX_PIN 17
 const int MODBUS_UPDATE_INTERVAL_MS = 300;

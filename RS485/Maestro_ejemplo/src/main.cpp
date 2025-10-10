@@ -20,7 +20,7 @@
 #define SLAVE_ID 1
 #define SLAVE_ID_2 2
 #define START_ADDRESS 0
-#define NUM_REGISTERS 45
+#define NUM_REGISTERS 60
 #define REQUEST_INTERVAL 6000 // Intervalo de petición en milisegundos (6 segundos)
 
 // Pines para el conversor RS485 (RX, TX)

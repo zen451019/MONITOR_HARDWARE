@@ -18,7 +18,7 @@ const int RMS_HISTORY_SIZE = 100;
 
 // Configuración Modbus
 #define SLAVE_ID 1
-#define NUM_REGISTERS 45  // 5 por canal (3 canales x 5 = 15)
+#define NUM_REGISTERS 60  // 5 por canal (3 canales x 5 = 15)
 #define RX_PIN 16
 #define TX_PIN 17
 const int MODBUS_UPDATE_INTERVAL_MS = 300;
@@ -65,7 +65,7 @@ SemaphoreHandle_t dataMutex;
 TaskHandle_t dataUpdateTaskHandle;
 
 // =================================================================
-// --- FUNCIONES DEL PRIMER CÓDIGO (ADC y RMS) ---
+// --- FUNCIONES (ADC y RMS) ---
 // =================================================================
 void IRAM_ATTR on_adc_data_ready() { adc_data_ready = true; }
 
@@ -148,7 +148,7 @@ int get_rms_history(int channel, float* output_buffer, int count) {
 }
 
 // =================================================================
-// --- FUNCIONES DEL SEGUNDO CÓDIGO (Modbus) ---
+// --- FUNCIONES (Modbus) ---
 // =================================================================
 // Tarea de actualización de datos
 void dataUpdateTask(void *pvParameters) {
