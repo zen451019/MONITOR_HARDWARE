@@ -1,0 +1,101 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" version="28.2.3">
+  <diagram name="Página-1" id="c7mmJYkLSnH0VMgmGrYD">
+    <mxGraphModel dx="872" dy="473" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-42" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-15" target="wHe2n8VnJ7bG0w70tIHl-7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-15" value="" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="45" y="310" width="300" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-1" value="&lt;font face=&quot;Monaspace Neon, ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace&quot;&gt;VoltageSensor&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="310" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-2" target="wHe2n8VnJ7bG0w70tIHl-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-2" value="&lt;pre style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 13.6px; outline: none; tab-size: 4; overflow-wrap: normal; overflow: auto; line-height: 1.45; color: rgb(31, 35, 40); text-align: start; margin: 0px !important; padding: 16px 24px !important; background: none !important; border-radius: 0px !important;&quot; tabindex=&quot;0&quot; class=&quot;CodeBlock-module__code--gyjSL&quot;&gt;&lt;code style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 14px; tab-size: 4; padding: 0px; margin: 0px; background: rgba(0, 0, 0, 0); border-radius: 6px; word-break: normal; border: 0px; display: inline; overflow: visible; line-height: inherit; overflow-wrap: normal;&quot; class=&quot;&quot;&gt;PeripheralManager&lt;/code&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="122" y="360" width="146" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-38" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-15" target="wHe2n8VnJ7bG0w70tIHl-37">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="195" y="630" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-5" value="&lt;pre style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 13.6px; outline: none; tab-size: 4; overflow-wrap: normal; overflow: auto; line-height: 1.45; color: rgb(31, 35, 40); text-align: start; margin: 0px !important; padding: 16px 24px !important; background: none !important; border-radius: 0px !important;&quot; tabindex=&quot;0&quot; class=&quot;CodeBlock-module__code--gyjSL&quot;&gt;&lt;code style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 14px; tab-size: 4; padding: 0px; margin: 0px; background: rgba(0, 0, 0, 0); border-radius: 6px; word-break: normal; border: 0px; display: inline; overflow: visible; line-height: inherit; overflow-wrap: normal;&quot; class=&quot;&quot;&gt;DataRequestScheduler&lt;/code&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="110" y="510" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-7" target="wHe2n8VnJ7bG0w70tIHl-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-25" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-7" target="wHe2n8VnJ7bG0w70tIHl-21">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-7" target="wHe2n8VnJ7bG0w70tIHl-22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-7" target="wHe2n8VnJ7bG0w70tIHl-23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-34" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-7" target="wHe2n8VnJ7bG0w70tIHl-29">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-39" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-7" target="wHe2n8VnJ7bG0w70tIHl-37">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-7" value="&lt;pre style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 13.6px; outline: none; tab-size: 4; overflow-wrap: normal; overflow: auto; line-height: 1.45; color: rgb(31, 35, 40); text-align: start; margin: 0px !important; padding: 16px 24px !important; background: none !important; border-radius: 0px !important;&quot; tabindex=&quot;0&quot; class=&quot;CodeBlock-module__code--gyjSL&quot;&gt;&lt;code style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 14px; tab-size: 4; padding: 0px; margin: 0px; background: rgba(0, 0, 0, 0); border-radius: 6px; word-break: normal; border: 0px; display: inline; overflow: visible; line-height: inherit; overflow-wrap: normal;&quot; class=&quot;&quot;&gt;EventManager&lt;/code&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="405" width="120" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-21" value="&lt;font face=&quot;Monaspace Neon, ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace&quot;&gt;CurrentSensor&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="390" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-22" value="&lt;font face=&quot;Monaspace Neon, ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace&quot;&gt;PressureSensor&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="470" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-23" value="&lt;font face=&quot;Monaspace Neon, ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace&quot;&gt;...Sensor&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="550" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-29" value="&lt;pre style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 13.6px; outline: none; tab-size: 4; overflow-wrap: normal; overflow: auto; line-height: 1.45; color: rgb(31, 35, 40); text-align: start; margin: 0px !important; padding: 16px 24px !important; background: none !important; border-radius: 0px !important;&quot; tabindex=&quot;0&quot; class=&quot;CodeBlock-module__code--gyjSL&quot;&gt;&lt;code style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 14px; tab-size: 4; padding: 0px; margin: 0px; background: rgba(0, 0, 0, 0); border-radius: 6px; word-break: normal; border: 0px; display: inline; overflow: visible; line-height: inherit; overflow-wrap: normal;&quot; class=&quot;&quot;&gt;ErrorManager&lt;/code&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="280" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-32" value="ModbusRequest" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="660" y="430" width="110" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-35" value="FailedResponse" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="590" y="360" width="110" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-36" value="SuccessfulResponse" style="text;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="600" y="545" width="120" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-37" target="wHe2n8VnJ7bG0w70tIHl-40">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-37" value="&lt;pre style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 13.6px; outline: none; tab-size: 4; overflow-wrap: normal; overflow: auto; line-height: 1.45; color: rgb(31, 35, 40); text-align: start; background: none !important; margin: 0px !important; padding: 16px 24px !important; border-radius: 0px !important;&quot; tabindex=&quot;0&quot; class=&quot;CodeBlock-module__code--gyjSL&quot;&gt;&lt;code style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 14px; tab-size: 4; padding: 0px; margin: 0px; background: rgba(0, 0, 0, 0); border-radius: 6px; word-break: normal; border: 0px; display: inline; overflow: visible; line-height: inherit; overflow-wrap: normal;&quot; class=&quot;&quot;&gt;DataFormatter&lt;/code&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="600" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-48" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="wHe2n8VnJ7bG0w70tIHl-40" target="wHe2n8VnJ7bG0w70tIHl-47">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-40" value="&lt;pre style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 13.6px; outline: none; tab-size: 4; overflow-wrap: normal; overflow: auto; line-height: 1.45; color: rgb(31, 35, 40); text-align: start; margin: 0px !important; padding: 16px 24px !important; background: none !important; border-radius: 0px !important;&quot; tabindex=&quot;0&quot; class=&quot;CodeBlock-module__code--gyjSL&quot;&gt;&lt;code style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 14px; tab-size: 4; padding: 0px; margin: 0px; background: rgba(0, 0, 0, 0); border-radius: 6px; word-break: normal; border: 0px; display: inline; overflow: visible; line-height: inherit; overflow-wrap: normal;&quot; class=&quot;&quot;&gt;LoRaWANManager&lt;/code&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="740" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-43" value="&lt;span style=&quot;color: rgb(0, 0, 0); font-family: Helvetica; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: center; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: nowrap; background-color: rgb(236, 236, 236); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; display: inline !important; float: none;&quot;&gt;Request&lt;/span&gt;" style="text;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="410" y="430" width="50" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-45" value="Peripherals" style="text;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="390" y="600" width="120" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-46" value="Data" style="text;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="600" y="690" width="40" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="wHe2n8VnJ7bG0w70tIHl-47" value="&lt;pre style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 13.6px; outline: none; tab-size: 4; overflow-wrap: normal; overflow: auto; line-height: 1.45; color: rgb(31, 35, 40); text-align: start; background: none !important; margin: 0px !important; padding: 16px 24px !important; border-radius: 0px !important;&quot; tabindex=&quot;0&quot; class=&quot;CodeBlock-module__code--gyjSL&quot;&gt;&lt;code style=&quot;box-sizing: border-box; font-family: &amp;quot;Monaspace Neon&amp;quot;, ui-monospace, SFMono-Regular, &amp;quot;SF Mono&amp;quot;, Menlo, Consolas, &amp;quot;Liberation Mono&amp;quot;, monospace; font-size: 14px; tab-size: 4; padding: 0px; margin: 0px; background: rgba(0, 0, 0, 0); border-radius: 6px; word-break: normal; border: 0px; display: inline; overflow: visible; line-height: inherit; overflow-wrap: normal;&quot; class=&quot;&quot;&gt;Gateway&lt;/code&gt;&lt;/pre&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="870" width="120" height="60" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
