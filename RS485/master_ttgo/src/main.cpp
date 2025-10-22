@@ -2,10 +2,8 @@
 #include <SPI.h>
 #include <hal/hal.h>
 #include <lmic.h>
-
 #include <vector>
 #include <algorithm>
-
 #include "ModbusClientRTU.h"
 
 // =================================================================================================
@@ -25,7 +23,7 @@ typedef struct {
     uint16_t samplingInterval;     // ms
     uint8_t dataType;              // 1=uint8, 2=uint16, 3=compressed bytes, 4=float16
     uint8_t scale;                 // 10^scale
-    uint8_t compressedBytes;       // Solo si dataType=3
+    uint8_t compressedBytes;       // Solo si dataType= 3
 } ModbusSensorParam;
 
 struct ModbusSlaveParam {
@@ -39,22 +37,31 @@ std::vector<ModbusSlaveParam> slaveList;
 
 enum DiscoveryOrder {
     DISCOVERY_GET_COUNT = 1,
-    DISCOVERY_GET_DATA_OFFSET = 255
+    DISCOVERY_GET_DATA_OFFSET = 255,
+    DISCOVERY_READ_SENSOR_PARAM = 10   // Nueva orden: leer regs 0..7 (8 regs)
+};
+
+enum RequestType {
+    REQUEST_UNKNOWN,
+    REQUEST_DISCOVERY,
+    REQUEST_SAMPLING
 };
 
 // Gestor de solicitudes Modbus RTU
 struct ModbusRequestInfo {
     uint32_t token;           // Token de la solicitud
     uint8_t slaveId;          // Esclavo al que fue enviada
+    uint8_t sensorId;        // ID del sensor
     uint8_t functionCode;     // Código de función Modbus
+    RequestType type;         // Propósito de la solicitud (descubrimiento o muestreo)
 };
 
 constexpr size_t MAX_REQUESTS = 16;
 ModbusRequestInfo requestBuffer[MAX_REQUESTS];
 size_t requestHead = 0; // Próxima posición para guardar
 
-void addRequest(uint32_t token, uint8_t slaveId, uint8_t functionCode) {
-    requestBuffer[requestHead] = ModbusRequestInfo{token, slaveId, functionCode};
+void addRequest(uint32_t token, uint8_t slaveId, uint8_t sensorId, uint8_t functionCode, RequestType type) {
+    requestBuffer[requestHead] = ModbusRequestInfo{token, slaveId, sensorId, functionCode, type};
     requestHead = (requestHead + 1) % MAX_REQUESTS;
 }
 
@@ -95,6 +102,25 @@ struct SensorSchedule {
 // Lista de sensores a muestrear
 std::vector<SensorSchedule> scheduleList;
 SemaphoreHandle_t schedulerMutex;
+
+void initScheduler() {
+    // Tomar el control exclusivo de las listas
+    if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
+        scheduleList.clear();
+        for (const auto& slave : slaveList) {
+            for (const auto& sensor : slave.sensors) {
+                scheduleList.push_back({
+                    slave.slaveID,
+                    sensor.sensorID,
+                    sensor.samplingInterval,
+                    millis() // Primer muestreo inmediato
+                });
+            }
+        }
+        // Devolver el control
+        xSemaphoreGive(schedulerMutex);
+    }
+}
 
 void handleData(ModbusMessage response, uint32_t token) {
     ResponseFormat resp;
@@ -171,59 +197,17 @@ struct EventManagerFormat {
     uint16_t order;
 };
 
-// NUEVA FUNCIÓN: Realiza el proceso de descubrimiento para un solo dispositivo.
+// Realiza el proceso de descubrimiento para un solo dispositivo.
 // Esta función se ejecuta en el contexto de la tarea que la llama.
 bool discoverDeviceSensors(uint8_t deviceId) {
-    Serial.printf("Iniciando descubrimiento para dispositivo %u...\n", deviceId);
-    const TickType_t responseTimeout = pdMS_TO_TICKS(200);
+    Serial.printf("Iniciando descubrimiento simple para dispositivo %u...\n", deviceId);
 
-    // --- FASE 1: Preguntar cuántos registros de configuración hay ---
-    // La orden 'DISCOVERY_GET_COUNT' es para solicitar el número de registros.
-    EventManagerFormat event_p1 = {deviceId, 0, DISCOVERY_GET_COUNT}; // sensorID=0 es un placeholder
-    if (xQueueSend(queueEventos_Peripheral, &event_p1, pdMS_TO_TICKS(10)) != pdTRUE) {
-        Serial.println("Error: No se pudo encolar el evento de descubrimiento (Fase 1).");
+    // Enviar una sola lectura: FC03 desde addr=0, qty=8
+    EventManagerFormat ev = {deviceId, 0, DISCOVERY_READ_SENSOR_PARAM};
+    if (xQueueSend(queueEventos_Peripheral, &ev, pdMS_TO_TICKS(10)) != pdTRUE) {
+        Serial.println("Error: No se pudo encolar el evento de descubrimiento (lectura 0..7).");
         return false;
     }
-
-    ResponseFormat response_p1;
-    if (xQueueReceive(queueRespuestas, &response_p1, responseTimeout) != pdTRUE) {
-        Serial.printf("Timeout (Fase 1) esperando respuesta de %u\n", deviceId);
-        return false;
-    }
-
-    // Validar que la respuesta es para nosotros
-    if (response_p1.deviceId != deviceId) {
-        Serial.printf("Respuesta de Fase 1 era para otro dispositivo (%u)\n", response_p1.deviceId);
-        // NOTA: Aquí podrías devolver el mensaje a la cola si es para otra tarea.
-        return false;
-    }
-
-    uint8_t numRegistersToRead = 0;
-    memcpy(&numRegistersToRead, response_p1.data, sizeof(uint8_t));
-    Serial.printf("Dispositivo %u informa que tiene %u registros de configuración.\n", deviceId, numRegistersToRead);
-
-    if (numRegistersToRead == 0) {
-        return true; // Éxito, no hay sensores que registrar.
-    }
-
-    // --- FASE 2: Pedir los registros de configuración ---
-    uint16_t instruccion = DISCOVERY_GET_DATA_OFFSET + numRegistersToRead;
-    EventManagerFormat event_p2 = {deviceId, DISCOVERY_GET_DATA_OFFSET, instruccion};
-    if (xQueueSend(queueEventos_Peripheral, &event_p2, pdMS_TO_TICKS(10)) != pdTRUE) {
-        Serial.println("Error: No se pudo encolar el evento de descubrimiento (Fase 2).");
-        return false;
-    }
-
-    ResponseFormat response_p2;
-    if (xQueueReceive(queueRespuestas, &response_p2, responseTimeout) != pdTRUE) {
-        Serial.printf("Timeout (Fase 2) esperando respuesta de %u\n", deviceId);
-        return false;
-    }
-
-    // TODO: Aquí procesarías response_p2.data para llenar tu estructura slaveList.
-    Serial.printf("Recibidos %u bytes de configuración del dispositivo %u. Procesamiento pendiente.\n", response_p2.length, deviceId);
-    // parseAndStoreSensorConfig(response_p2.data, response_p2.length);
-
     return true;
 }
 
@@ -242,31 +226,13 @@ void initialDiscoveryTask(void *pvParameters) {
     }
 
     Serial.println("--- Tarea de Descubrimiento Inicial: Finalizada. Inicializando Scheduler... ---");
-    //initScheduler(); // Ahora que tenemos la lista de sensores, inicializamos el scheduler.
+    initScheduler(); // Ahora que tenemos la lista de sensores, inicializamos el scheduler.
 
     Serial.println("--- Tarea de Descubrimiento Inicial: Autodestruyendo. ---");
     vTaskDelete(NULL); // La tarea se elimina a sí misma.
 }
 
 
-void initScheduler() {
-    // Tomar el control exclusivo de las listas
-    if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
-        scheduleList.clear();
-        for (const auto& slave : slaveList) {
-            for (const auto& sensor : slave.sensors) {
-                scheduleList.push_back({
-                    slave.slaveID,
-                    sensor.sensorID,
-                    sensor.samplingInterval,
-                    millis() // Primer muestreo inmediato
-                });
-            }
-        }
-        // Devolver el control
-        xSemaphoreGive(schedulerMutex);
-    }
-}
 
 // Tarea del scheduler
 void DataRequestScheduler(void *pvParameters) {
@@ -336,6 +302,58 @@ bool getSensorParams(uint8_t slaveId, uint8_t sensorID, uint16_t& startAddr, uin
     return false;
 }
 
+// Procesa la respuesta de descubrimiento, crea/actualiza el esclavo y su sensor.
+void parseAndStoreDiscoveryResponse(const ResponseFormat& response, uint8_t slaveId) {
+    // Se esperan 8 registros, que son 16 bytes de datos.
+    if (response.length < 16) {
+        Serial.printf("Error: Respuesta de descubrimiento incompleta para esclavo %u. Se esperaban 16 bytes, se recibieron %u.\n", slaveId, response.length);
+        return;
+    }
+
+    ModbusSensorParam newSensor;
+    // Asumimos que cada registro (2 bytes) corresponde a un campo de la estructura.
+    // Los datos de Modbus vienen en formato Big Endian.
+    newSensor.sensorID          = response.data[1];  // Reg 0: sensorID (tomando el byte bajo)
+    newSensor.numberOfChannels  = response.data[3];  // Reg 1: numberOfChannels (tomando el byte bajo)
+    newSensor.startAddress      = (response.data[4] << 8) | response.data[5];   // Reg 2: startAddress
+    newSensor.maxRegisters      = (response.data[6] << 8) | response.data[7];   // Reg 3: maxRegisters
+    newSensor.samplingInterval  = (response.data[8] << 8) | response.data[9];   // Reg 4: samplingInterval
+    newSensor.dataType          = response.data[11]; // Reg 5: dataType (tomando el byte bajo)
+    newSensor.scale             = response.data[13]; // Reg 6: scale (tomando el byte bajo)
+    newSensor.compressedBytes   = response.data[15]; // Reg 7: compressedBytes (tomando el byte bajo)
+
+    Serial.printf("Sensor descubierto en esclavo %u: ID=%u, Canales=%u, Addr=%u, Regs=%u, Intervalo=%u ms\n",
+        slaveId, newSensor.sensorID, newSensor.numberOfChannels, newSensor.startAddress, newSensor.maxRegisters, newSensor.samplingInterval);
+
+    // Buscar si el esclavo ya existe en la lista
+    auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
+        [&](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
+
+    if (slaveIt != slaveList.end()) {
+        // El esclavo ya existe. Buscar si el sensor ya está registrado.
+        auto sensorIt = std::find_if(slaveIt->sensors.begin(), slaveIt->sensors.end(),
+            [&](const ModbusSensorParam& s) { return s.sensorID == newSensor.sensorID; });
+
+        if (sensorIt != slaveIt->sensors.end()) {
+            // El sensor ya existe, sobreescribir sus parámetros.
+            *sensorIt = newSensor;
+            Serial.printf("Parámetros del sensor %u actualizados para el esclavo %u.\n", newSensor.sensorID, slaveId);
+        } else {
+            // El sensor no existe, añadirlo a la lista de sensores del esclavo.
+            slaveIt->sensors.push_back(newSensor);
+            Serial.printf("Nuevo sensor %u añadido al esclavo %u.\n", newSensor.sensorID, slaveId);
+        }
+    } else {
+        // El esclavo no existe, crearlo y añadir el sensor.
+        ModbusSlaveParam newSlave;
+        newSlave.slaveID = slaveId;
+        newSlave.consecutiveFails = 0;
+        newSlave.sensors.push_back(newSensor);
+        slaveList.push_back(newSlave);
+        Serial.printf("Nuevo esclavo %u añadido a la lista con sensor %u.\n", slaveId, newSensor.sensorID);
+    }
+}
+
 void EventManager(void *pvParameters) {
     uint32_t requestToken = 0;
     while (true) {
@@ -343,19 +361,26 @@ void EventManager(void *pvParameters) {
         bool requestSent = false;
         uint8_t functionCode = 0;
         Error err = Error::SUCCESS;
+        RequestType reqType = REQUEST_UNKNOWN;
 
         // Prioridad: primero scheduler, luego peripheral
         if (xQueueReceive(queueEventos_Scheduler, &event, 0) == pdTRUE) {
             uint16_t startAddr, numRegs;
             if (getSensorParams(event.slaveId, event.sensorID, startAddr, numRegs)) {
                 functionCode = READ_HOLD_REGISTER;
+                reqType = REQUEST_SAMPLING;
                 err = MB.addRequest(++requestToken, event.slaveId, functionCode, startAddr, numRegs);
                 requestSent = true;
             } else {
                 Serial.printf("Parámetros no encontrados para SlaveID %u, SensorID %u\n", event.slaveId, event.sensorID);
             }
         } else if (xQueueReceive(queueEventos_Peripheral, &event, 0) == pdTRUE) {
-            if (event.order == DISCOVERY_GET_COUNT) {
+            reqType = REQUEST_DISCOVERY; // Todas las solicitudes de periféricos son de descubrimiento
+            if (event.order == DISCOVERY_READ_SENSOR_PARAM) {
+                functionCode = READ_HOLD_REGISTER;          // FC03
+                err = MB.addRequest(++requestToken, event.slaveId, functionCode, 0, 8); // addr=0, qty=8
+                requestSent = true;
+            } else if (event.order == DISCOVERY_GET_COUNT) {
                 functionCode = READ_HOLD_REGISTER;
                 err = MB.addRequest(++requestToken, event.slaveId, functionCode, 0, event.order);
                 requestSent = true;
@@ -368,7 +393,7 @@ void EventManager(void *pvParameters) {
         }
 
         if (requestSent && err == Error::SUCCESS) {
-            addRequest(requestToken, event.slaveId, functionCode);
+            addRequest(requestToken, event.slaveId, event.sensorID, functionCode, reqType);
         } else if (requestSent) {
             Serial.printf("Error al encolar solicitud Modbus para token %u\n", requestToken);
         }
@@ -377,10 +402,208 @@ void EventManager(void *pvParameters) {
     }
 }
 
+// ==================== EMPAQUETADOR DE BITS ====================
+struct BitPacker
+{
+    uint64_t buffer = 0; // acumulador de hasta 64 bits
+    int bits_usados = 0; // cuántos bits válidos hay en el buffer
+
+    void push(uint16_t valor, int nbits, std::vector<uint8_t> &out)
+    {
+        // desplazar buffer para dejar espacio
+        buffer <<= nbits;
+        // quedarnos con solo los bits válidos
+        buffer |= (valor & ((1ULL << nbits) - 1));
+        bits_usados += nbits;
+
+        // mientras tengamos al menos 8 bits, sacar bytes
+        while (bits_usados >= 8)
+        {
+            int shift = bits_usados - 8;
+            uint8_t byte = (buffer >> shift) & 0xFF;
+            out.push_back(byte);
+            bits_usados -= 8;
+            buffer &= (1 << bits_usados) - 1; // limpiar bits ya usados
+        }
+    }
+
+    void flush(std::vector<uint8_t> &out)
+    {
+        if (bits_usados > 0)
+        {
+            uint8_t byte = buffer << (8 - bits_usados);
+            out.push_back(byte);
+            bits_usados = 0;
+            buffer = 0;
+        }
+    }
+};
+
+static bool formatAndEnqueueSensorData(const ResponseFormat& response, const ModbusRequestInfo& request, std::vector<uint8_t>& values) {
+    uint8_t slaveId = request.slaveId;
+
+    auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
+        [&](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
+    if (slaveIt == slaveList.end()) {
+        Serial.printf("Formato: no se encontró el esclavo %u.\n", slaveId);
+        return false;
+    }
+
+    uint8_t sensorID = request.sensorId;
+
+    auto sensorIt = std::find_if(slaveIt->sensors.begin(), slaveIt->sensors.end(),
+        [&](const ModbusSensorParam& sensor) { return sensor.sensorID == sensorID; });
+    if (sensorIt == slaveIt->sensors.end()) {
+        Serial.printf("Formato: no se encontró el sensor %u en esclavo %u.\n", sensorID, slaveId);
+        return false;
+    }
+
+    const ModbusSensorParam& params = *sensorIt;
+    Serial.printf("Formato: esclavo %u sensor %u -> regs:%u tipo:%u escala:%u comp:%u\n",
+                  slaveId, params.sensorID, params.maxRegisters,
+                  params.dataType, params.scale, params.compressedBytes);
+
+    uint8_t dataType = params.dataType; // 1=uint8, 2=uint16
+    uint8_t scale = params.scale;
+    uint8_t compressedBytes = params.compressedBytes;
+
+    values.clear();
+    if (compressedBytes > 0) {
+        BitPacker packer;
+        for (size_t i = 0; i < params.maxRegisters; ++i) {
+            size_t offset = 3 + i * 2;
+            if ((offset + 1) >= response.length) {
+                break;
+            }
+            uint8_t high = response.data[offset];
+            uint8_t low  = response.data[offset + 1];
+            uint16_t raw = (static_cast<uint16_t>(high) << 8) | low;
+            packer.push(raw, compressedBytes, values);
+        }
+        packer.flush(values);
+    } else {
+        for (size_t i = 0; i < params.maxRegisters; ++i) {
+            size_t offset = 3 + i * 2;
+            if ((offset + 1) >= response.length) {
+                break;
+            }
+            uint8_t high = response.data[offset];
+            uint8_t low  = response.data[offset + 1];
+
+            if (dataType == 1) {            // uint8 -> solo byte bajo
+                values.push_back(low);
+            } else if (dataType == 2) {     // uint16 -> alto seguido del bajo
+                values.push_back(high);
+                values.push_back(low);
+            } else {                        // por defecto mantener big-endian
+                values.push_back(high);
+                values.push_back(low);
+            }
+        }
+    }
+    // TODO: decodificar según params.dataType, aplicar escala, manejar compresión si params.dataType == 3
+    // TODO: encolar payload formateado para LoRa
+
+    return true;
+}
+
+#define MAX_SENSOR_PAYLOAD 128
+
+struct SensorDataPayload {
+    uint8_t slaveId;
+    uint8_t sensorId;
+    uint8_t data[MAX_SENSOR_PAYLOAD]; // Array de tamaño fijo
+    size_t dataSize;                  // Para saber cuántos bytes son válidos
+};
+
+QueueHandle_t queueSensorDataPayload;
+
 void DataFormatter (void *pvParameters) {
     while (true) {
+        ResponseFormat response;
+        // Esperar indefinidamente por una respuesta en la cola
+        if (xQueueReceive(queueRespuestas, &response, portMAX_DELAY) == pdTRUE) {
+            
+            // Usar el token de la respuesta para encontrar la solicitud original
+            ModbusRequestInfo* request = findRequestByToken(response.order);
+
+            if (request && request->token != 0) {
+                Serial.printf("Respuesta recibida para Token %u (Esclavo %u)\n", request->token, request->slaveId);
+                std::vector<uint8_t> values;
+                // Diferenciar el tratamiento según el tipo de solicitud
+                switch (request->type) {
+                    case REQUEST_DISCOVERY:
+                        Serial.println("-> Procesando respuesta de DESCUBRIMIENTO.");
+                        parseAndStoreDiscoveryResponse(response, request->slaveId);
+                        break;
+
+                    case REQUEST_SAMPLING:
+                        Serial.println("-> Procesando respuesta de MUESTREO de datos.");
+                        
+                        if (!formatAndEnqueueSensorData(response, *request, values)) {
+                            Serial.println("Formato: fallo al procesar datos de muestreo.");
+                        }
+                        else {
+                            // Encolar el payload formateado
+                            SensorDataPayload payload;
+                            payload.slaveId = request->slaveId;
+                            payload.sensorId = request->sensorId;
 
 
+                            // Copiar los datos de forma segura
+                            payload.dataSize = std::min(values.size(), (size_t)MAX_SENSOR_PAYLOAD);
+                            memcpy(payload.data, values.data(), payload.dataSize);
+
+                            if (xQueueSend(queueSensorDataPayload, &payload, pdMS_TO_TICKS(10)) != pdTRUE) {
+                                Serial.println("Error: No se pudo encolar el payload de datos del sensor.");
+                            } else {
+                                Serial.printf("Payload de datos del sensor encolado: Esclavo %u, Sensor %u, Bytes %u\n",
+                                              payload.slaveId, payload.sensorId, payload.dataSize);
+                            }
+                        }
+                        break;
+
+                    default:
+                        Serial.printf("Tipo de solicitud desconocido para Token %u\n", request->token);
+                        break;
+                }
+
+                // Invalidar el token para que no se procese de nuevo (importante si hay reintentos o errores)
+                request->token = 0;
+
+            } else {
+                Serial.printf("No se encontró información de solicitud para el token %u, o ya fue procesado.\n", response.order);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Tarea temporal para imprimir los payloads de datos formateados.
+ * Esto simula el consumidor final (que será la tarea LoRa).
+ */
+void DataPrinterTask(void *pvParameters) {
+    SensorDataPayload payload;
+    while (true) {
+        // Esperar indefinidamente a que llegue un payload
+        if (xQueueReceive(queueSensorDataPayload, &payload, portMAX_DELAY) == pdTRUE) {
+            
+            Serial.println();
+            Serial.println("--- 🛰️ PAYLOAD DE SENSOR FORMATEADO ---");
+            Serial.printf("  [Fuente] Esclavo: %u, Sensor: %u\n", payload.slaveId, payload.sensorId);
+            Serial.printf("  [Datos]  Tamaño: %u bytes\n", payload.dataSize);
+            Serial.print("  [Payload] ");
+            
+            // Imprimir los bytes en formato hexadecimal
+            for (size_t i = 0; i < payload.dataSize; i++) {
+                if (payload.data[i] < 0x10) Serial.print("0");
+                Serial.print(payload.data[i], HEX);
+                Serial.print(" ");
+            }
+            Serial.println();
+            Serial.println("------------------------------------------");
+            Serial.println();
+        }
     }
 }
 
@@ -492,14 +715,22 @@ void setup() {
     MB.setTimeout(2000);                // Timeout de 2 segundos por petición
     MB.begin(Serial2);                  // Iniciar cliente (la tarea de fondo se inicia aquí)
 
+    // Crear colas y semáforos
     schedulerMutex = xSemaphoreCreateMutex();
-
     queueEventos_Peripheral = xQueueCreate(10, sizeof(EventManagerFormat));
     queueEventos_Scheduler = xQueueCreate(10, sizeof(EventManagerFormat));
     queueRespuestas = xQueueCreate(10, sizeof(ResponseFormat));
 
+    // ⬇️ 1. LÍNEA FALTANTE (AHORA CORREGIDA CON EL TAMAÑO FIJO)
+    queueSensorDataPayload = xQueueCreate(10, sizeof(SensorDataPayload));
+
     xTaskCreatePinnedToCore(EventManager, "EventManager", 4096, NULL, 4, NULL, 0);
     xTaskCreatePinnedToCore(DataRequestScheduler, "Scheduler", 4096, NULL, 3, NULL, 0);
+
+    xTaskCreatePinnedToCore(DataFormatter, "DataFormatter", 4096, NULL, 2, NULL, 0);
+
+    xTaskCreatePinnedToCore(DataPrinterTask, "DataPrinter", 4096, NULL, 2, NULL, 0);
+
     // --- INICIAR DESCUBRIMIENTO ---
     // Creamos una tarea solo para el descubrimiento. Se ejecutará una vez y se borrará.
     xTaskCreate(initialDiscoveryTask, "InitialDiscovery", 4096, NULL, 2, NULL);
