@@ -38,7 +38,7 @@ std::vector<ModbusSlaveParam> slaveList;
 enum DiscoveryOrder {
     DISCOVERY_GET_COUNT = 1,
     DISCOVERY_GET_DATA_OFFSET = 255,
-    DISCOVERY_READ_SENSOR_PARAM = 10   // Nueva orden: leer regs 0..7 (8 regs)
+    DISCOVERY_READ_SENSOR_PARAM = 8   // Nueva orden: leer regs 0..7 (8 regs)
 };
 
 enum RequestType {
@@ -313,14 +313,16 @@ void parseAndStoreDiscoveryResponse(const ResponseFormat& response, uint8_t slav
     ModbusSensorParam newSensor;
     // Asumimos que cada registro (2 bytes) corresponde a un campo de la estructura.
     // Los datos de Modbus vienen en formato Big Endian.
-    newSensor.sensorID          = response.data[1];  // Reg 0: sensorID (tomando el byte bajo)
-    newSensor.numberOfChannels  = response.data[3];  // Reg 1: numberOfChannels (tomando el byte bajo)
-    newSensor.startAddress      = (response.data[4] << 8) | response.data[5];   // Reg 2: startAddress
-    newSensor.maxRegisters      = (response.data[6] << 8) | response.data[7];   // Reg 3: maxRegisters
-    newSensor.samplingInterval  = (response.data[8] << 8) | response.data[9];   // Reg 4: samplingInterval
-    newSensor.dataType          = response.data[11]; // Reg 5: dataType (tomando el byte bajo)
-    newSensor.scale             = response.data[13]; // Reg 6: scale (tomando el byte bajo)
-    newSensor.compressedBytes   = response.data[15]; // Reg 7: compressedBytes (tomando el byte bajo)
+    // El offset correcto para los datos de registros Modbus es 3 (después del encabezado Modbus RTU)
+    // Cada registro son 2 bytes (big-endian)
+    newSensor.sensorID          = response.data[3 + 1];  // Reg 0: sensorID (byte bajo)
+    newSensor.numberOfChannels  = response.data[3 + 3];  // Reg 1: numberOfChannels (byte bajo)
+    newSensor.startAddress      = (response.data[3 + 4] << 8) | response.data[3 + 5];   // Reg 2: startAddress
+    newSensor.maxRegisters      = (response.data[3 + 6] << 8) | response.data[3 + 7];   // Reg 3: maxRegisters
+    newSensor.samplingInterval  = (response.data[3 + 8] << 8) | response.data[3 + 9];   // Reg 4: samplingInterval
+    newSensor.dataType          = response.data[3 + 11]; // Reg 5: dataType (byte bajo)
+    newSensor.scale             = response.data[3 + 13]; // Reg 6: scale (byte bajo)
+    newSensor.compressedBytes   = response.data[3 + 15]; // Reg 7: compressedBytes (byte bajo)
 
     Serial.printf("Sensor descubierto en esclavo %u: ID=%u, Canales=%u, Addr=%u, Regs=%u, Intervalo=%u ms\n",
         slaveId, newSensor.sensorID, newSensor.numberOfChannels, newSensor.startAddress, newSensor.maxRegisters, newSensor.samplingInterval);
@@ -734,8 +736,6 @@ void setup() {
     // --- INICIAR DESCUBRIMIENTO ---
     // Creamos una tarea solo para el descubrimiento. Se ejecutará una vez y se borrará.
     xTaskCreate(initialDiscoveryTask, "InitialDiscovery", 4096, NULL, 2, NULL);
-
-
 
     // Creación de cola para fragmentos
     queueFragmentos = xQueueCreate(10, sizeof(Fragmento));

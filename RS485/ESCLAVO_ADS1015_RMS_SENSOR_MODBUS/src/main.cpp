@@ -182,6 +182,19 @@ void dataUpdateTask(void *pvParameters) {
     }
 }
 
+struct SensorData {
+    uint16_t sensorID;
+    uint16_t numberOfChannels;
+    uint16_t startAddress;
+    uint16_t maxRegisters;
+    uint16_t samplingInterval;     // ms
+    uint16_t dataType;              // 1=uint8, 2=uint16, 3=compressed bytes, 4=float16
+    uint16_t scale;                 // 10^scale
+    uint16_t compressedBytes;       // Solo si dataType= 3
+};
+
+SensorData sensor = {1, 3, 10, NUM_REGISTERS, 300, 2, 1, 0};
+
 ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
     uint16_t address, words;
     ModbusMessage response;
@@ -189,21 +202,43 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
     request.get(2, address);
     request.get(4, words);
 
-    if (address >= NUM_REGISTERS || (address + words) > NUM_REGISTERS) {
+    // Si la petición es para los primeros 8 registros, enviar los campos de 'sensor'
+    if (address == 0 && words == 8) {
+        response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+        response.add(sensor.sensorID);
+        response.add(sensor.numberOfChannels);
+        response.add(sensor.startAddress);
+        response.add(sensor.maxRegisters);
+        response.add(sensor.samplingInterval);
+        response.add(sensor.dataType);
+        response.add(sensor.scale);
+        response.add(sensor.compressedBytes);
+        return response;
+    }
+    // Si la petición es para los datos RMS (dirección 10, 60 registros)
+    else if (address == 10 && words == NUM_REGISTERS)
+    {
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+            for (uint16_t i = 0; i < words; ++i) {
+                response.add(holdingRegisters[i]);
+            }
+            xSemaphoreGive(dataMutex);
+        } else {
+            response.setError(request.getServerID(), request.getFunctionCode(), SERVER_DEVICE_BUSY);
+        }
+        return response;
+    }
+    // Para cualquier otra petición, ahora aplicamos la validación de límites
+    else if (address >= NUM_REGISTERS || (address + words) > NUM_REGISTERS) {
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
         return response;
     }
-
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
-        for (uint16_t i = 0; i < words; ++i) {
-            response.add(holdingRegisters[address + i]);
-        }
-        xSemaphoreGive(dataMutex);
-    } else {
-        response.setError(request.getServerID(), request.getFunctionCode(), SERVER_DEVICE_BUSY);
+    // Si no es un caso especial y está dentro de los límites (aunque no se maneje explícitamente)
+    else {
+        response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+        return response;
     }
-    return response;
 }
 
 // =================================================================
