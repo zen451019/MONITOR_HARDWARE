@@ -109,14 +109,29 @@ void initScheduler() {
         scheduleList.clear();
         for (const auto& slave : slaveList) {
             for (const auto& sensor : slave.sensors) {
+                uint32_t calculatedInterval = sensor.samplingInterval; // Valor por defecto
+                if (sensor.numberOfChannels > 0 && sensor.maxRegisters > 0) {
+                    // Calcular el intervalo total para llenar el buffer de registros
+                    uint16_t registersPerChannel = sensor.maxRegisters / sensor.numberOfChannels;
+                    calculatedInterval = (uint32_t)sensor.samplingInterval * registersPerChannel;
+                }
+
                 scheduleList.push_back({
                     slave.slaveID,
                     sensor.sensorID,
-                    sensor.samplingInterval,
+                    (uint16_t)calculatedInterval, // Usar el intervalo calculado
                     millis() // Primer muestreo inmediato
                 });
             }
         }
+
+        // Imprimir el contenido de scheduleList
+        Serial.println("Contenido de scheduleList (actualizado con cálculo de intervalo):");
+        for (const auto& item : scheduleList) {
+            Serial.printf("  SlaveID: %u, SensorID: %u, Intervalo Calculado: %u ms, NextSample: %u\n",
+                item.slaveID, item.sensorID, item.samplingInterval, item.nextSampleTime);
+        }
+
         // Devolver el control
         xSemaphoreGive(schedulerMutex);
     }
@@ -218,7 +233,7 @@ void initialDiscoveryTask(void *pvParameters) {
 
     for (uint8_t deviceId : dispositivosAConsultar) {
         if (discoverDeviceSensors(deviceId)) {
-            Serial.printf("Descubrimiento exitoso para el dispositivo %u.\n", deviceId);
+            Serial.printf("Mensaje de descubrimiento enviado exitosamente para el dispositivo %u.\n", deviceId);
         } else {
             Serial.printf("Fallo en el descubrimiento para el dispositivo %u.\n", deviceId);
         }
@@ -241,7 +256,7 @@ void DataRequestScheduler(void *pvParameters) {
 
     while (true) {
         uint32_t now = millis();
-        TickType_t sleepTime = portMAX_DELAY; // Por defecto, dormir para siempre si no hay nada que hacer
+        TickType_t sleepTime = pdMS_TO_TICKS(1000); // Por defecto, esperar 1s si no hay nada que hacer
 
         // Tomar el control para leer la lista de planificación
         if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
@@ -253,6 +268,7 @@ void DataRequestScheduler(void *pvParameters) {
                     if (now >= item.nextSampleTime) {
                         // Es hora de enviar el evento
                         EventManagerFormat event = {item.slaveID, item.sensorID, 1};
+                        Serial.printf("Enviando solicitud de muestreo: SlaveID=%u, SensorID=%u, Intervalo=%u ms\n", item.slaveID, item.sensorID, item.samplingInterval);
                         xQueueSend(queueEventos_Scheduler, &event, pdMS_TO_TICKS(10));
                         
                         // Actualizar el próximo tiempo de muestreo
@@ -273,6 +289,7 @@ void DataRequestScheduler(void *pvParameters) {
                     sleepTime = pdMS_TO_TICKS(10); 
                 }
             }
+            // Si la lista está vacía, sleepTime mantiene su valor por defecto (1000 ms)
             
             // Devolver el control
             xSemaphoreGive(schedulerMutex);
@@ -282,7 +299,6 @@ void DataRequestScheduler(void *pvParameters) {
         vTaskDelay(sleepTime);
     }
 }
-
 
 // Devuelve true si encuentra el sensor, y asigna startAddr y numRegs
 bool getSensorParams(uint8_t slaveId, uint8_t sensorID, uint16_t& startAddr, uint16_t& numRegs) {
@@ -537,6 +553,7 @@ void DataFormatter (void *pvParameters) {
                     case REQUEST_DISCOVERY:
                         Serial.println("-> Procesando respuesta de DESCUBRIMIENTO.");
                         parseAndStoreDiscoveryResponse(response, request->slaveId);
+                        //initScheduler(); // Re-inicializar el scheduler con la nueva lista de sensores
                         break;
 
                     case REQUEST_SAMPLING:

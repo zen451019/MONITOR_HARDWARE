@@ -193,7 +193,7 @@ struct SensorData {
     uint16_t compressedBytes;       // Solo si dataType= 3
 };
 
-SensorData sensor = {1, 3, 10, NUM_REGISTERS, 300, 2, 1, 0};
+SensorData sensor = {1, 3, 10, NUM_REGISTERS, 300, 1, 1, 0};
 
 ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
     uint16_t address, words;
