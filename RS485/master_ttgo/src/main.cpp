@@ -3,6 +3,10 @@
 #include <hal/hal.h>
 #include <lmic.h>
 #include <vector>
+#include <cstdint>      // Para uint8_t, uint32_t
+#include <map>          // Para std::map (manejo de sensores)
+#include <ctime>        // Para time() (generar timestamp)
+#include <cstring>      // Para memcpy (aunque usamos insert)
 #include <algorithm>
 #include "ModbusClientRTU.h"
 
@@ -318,6 +322,23 @@ bool getSensorParams(uint8_t slaveId, uint8_t sensorID, uint16_t& startAddr, uin
     return false;
 }
 
+// Devuelve el número de registros por canal para un sensor dado.
+// Si no encuentra el sensor, retorna 0.
+uint8_t getRegistersPerChannel(uint8_t slaveId, uint8_t sensorID) {
+    auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
+        [&](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
+
+    if (slaveIt != slaveList.end()) {
+        auto sensorIt = std::find_if(slaveIt->sensors.begin(), slaveIt->sensors.end(),
+            [&](const ModbusSensorParam& sensor) { return sensor.sensorID == sensorID; });
+
+        if (sensorIt != slaveIt->sensors.end() && sensorIt->numberOfChannels > 0) {
+            return static_cast<uint8_t>(sensorIt->maxRegisters / sensorIt->numberOfChannels);
+        }
+    }
+    return 0;
+}
+
 // Procesa la respuesta de descubrimiento, crea/actualiza el esclavo y su sensor.
 void parseAndStoreDiscoveryResponse(const ResponseFormat& response, uint8_t slaveId) {
     // Se esperan 8 registros, que son 16 bytes de datos.
@@ -626,11 +647,155 @@ void DataPrinterTask(void *pvParameters) {
     }
 }
 
+// --- Mapeo de Sensor ID a Bits del Activate Byte ---
+// ¡IMPORTANTE! Debes ajustar estos IDs a los que uses en tu sistema.
+// Estos son solo ejemplos basados en el contexto.
+const uint8_t SENSOR_ID_BATERIA = 0;   // Asignado al Bit 0
+const uint8_t SENSOR_ID_VOLTAJE = 1;   // Asignado al Bit 1
+const uint8_t SENSOR_ID_CORRIENTE = 2; // Asignado al Bit 2
+const uint8_t SENSOR_ID_EXT_START = 3; // IDs 3, 4, 5, 6, 7 (Bits 3-7)
+const int MAX_SENSORES_EXTERNOS = 5;   // 5 bits restantes (3 al 7)
+
+/**
+ * @brief Construye un payload unificado a partir de una colección de datos de sensores.
+ * * Sigue el formato: [ID_MSG][TIMESTAMP][ACTIVATE_BYTE][LEN_BYTES...][DATA_BLOCKS...]
+ * * @param id_mensaje El byte de ID del mensaje (Cabecera).
+ * @param collectedPayloads El vector con los datos recolectados.
+ * @return std::vector<uint8_t> El payload binario listo para enviar.
+ */
+std::vector<uint8_t> construirPayloadUnificado(
+    uint8_t id_mensaje,
+    const std::vector<SensorDataPayload>& collectedPayloads)
+{
+    std::vector<uint8_t> payload;
+
+    // ================== 1. CABECERA (1 byte) ==================
+    payload.push_back(id_mensaje);
+
+    // ================== 2. TIMESTAMP (4 bytes) ==================
+    // Usamos el timestamp UNIX actual. El código original usaba millis()
+    // o un timestamp del buffer. time(nullptr) es el estándar C++.
+    uint32_t ts_s = static_cast<uint32_t>(time(nullptr));
+    payload.push_back((ts_s >> 24) & 0xFF);
+    payload.push_back((ts_s >> 16) & 0xFF);
+    payload.push_back((ts_s >> 8) & 0xFF);
+    payload.push_back(ts_s & 0xFF);
+
+    // Usamos un mapa para organizar los sensores presentes y manejar duplicados
+    // (el último sensor con el mismo ID sobreescribe a los anteriores).
+    std::map<uint8_t, const SensorDataPayload*> activeSensors;
+    for (const auto& sensorData : collectedPayloads) {
+        activeSensors[sensorData.sensorId] = &sensorData;
+    }
+
+    // ================== 3. ACTIVATE BYTE (1 byte) ==================
+    // Construido dinámicamente basado en los SENSOR_ID presentes
+    uint8_t activate_byte = 0;
+
+    // Bits 0, 1, 2 (Batería, Voltaje, Corriente)
+    if (activeSensors.count(SENSOR_ID_BATERIA))   activate_byte |= (1 << 0);
+    if (activeSensors.count(SENSOR_ID_VOLTAJE))   activate_byte |= (1 << 1);
+    if (activeSensors.count(SENSOR_ID_CORRIENTE)) activate_byte |= (1 << 2);
+    
+    // Bits 3+ (Otros sensores)
+    for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+        uint8_t current_sensor_id = SENSOR_ID_EXT_START + i;
+        if (activeSensors.count(current_sensor_id)) {
+            activate_byte |= (1 << (i + 3));
+        }
+    }
+    payload.push_back(activate_byte);
+
+    // ================== 4. DATA LENGTH BYTES (N bytes) ==================
+    // Se añade un byte de longitud por CADA bit activo en activate_byte,
+    // en el orden LSB a MSB (Batería, Voltaje, Corriente, Externos...).
+
+
+    // --- Batería (Bit 0) ---
+    if (activate_byte & (1 << 0)) {
+        const auto& sensor = activeSensors.at(SENSOR_ID_BATERIA);
+        //optener Data Length Bytes
+        uint8_t len_data = getRegistersPerChannel(sensor->slaveId, sensor->sensorId);
+        // Asumimos formato del ejemplo: No PKD, No 2BIT
+        uint8_t len_byte = (len_data & 0x1F);
+        payload.push_back(len_byte);
+    }
+
+    // --- Voltaje (Bit 1) ---
+    if (activate_byte & (1 << 1)) {
+        const auto& sensor = activeSensors.at(SENSOR_ID_VOLTAJE);
+        //optener Data Length Bytes
+        uint8_t len_data = getRegistersPerChannel(sensor->slaveId, sensor->sensorId);
+        // Asumimos formato del ejemplo: No PKD, No 2BIT
+        uint8_t len_byte = (len_data & 0x1F);
+        payload.push_back(len_byte);
+    }
+
+    // --- Corriente (Bit 2) ---
+    if (activate_byte & (1 << 2)) {
+        const auto& sensor = activeSensors.at(SENSOR_ID_CORRIENTE);
+        //optener Data Length Bytes
+        uint8_t len_data = getRegistersPerChannel(sensor->slaveId, sensor->sensorId);
+        // Asumimos formato del ejemplo: PKD (Bit 7), No 2BIT
+        uint8_t len_byte = 0x80 | (len_data & 0x1F);
+        payload.push_back(len_byte);
+    }
+
+    // --- Sensores Externos (Bits 3+) ---
+    for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+        if (activate_byte & (1 << (i + 3))) {
+            uint8_t current_sensor_id = SENSOR_ID_EXT_START + i;
+            const auto& sensor = activeSensors.at(current_sensor_id);
+            //optener Data Length Bytes
+            uint8_t len_data = getRegistersPerChannel(sensor->slaveId, sensor->sensorId);
+            // Asumimos formato simple: No PKD, No 2BIT
+            // (Debes cambiar esto si tus sensores externos usan packing)
+            uint8_t len_byte = (len_data & 0x1F);
+            payload.push_back(len_byte);
+        }
+    }
+
+    // ================== 5. BLOQUES DE DATOS (Resto) ==================
+    // Añadimos los datos de cada sensor activo, en el mismo orden.
+    // Esta es la mayor simplificación: asumimos que `sensor->data`
+    // ya contiene los bytes listos para enviar (ya procesados/empaquetados).
+
+    // --- Batería (Bit 0) ---
+    if (activate_byte & (1 << 0)) {
+        const auto& sensor = activeSensors.at(SENSOR_ID_BATERIA);
+        payload.insert(payload.end(), sensor->data, sensor->data + sensor->dataSize);
+    }
+
+    // --- Voltaje (Bit 1) ---
+    if (activate_byte & (1 << 1)) {
+        const auto& sensor = activeSensors.at(SENSOR_ID_VOLTAJE);
+        payload.insert(payload.end(), sensor->data, sensor->data + sensor->dataSize);
+    }
+
+    // --- Corriente (Bit 2) ---
+    if (activate_byte & (1 << 2)) {
+        const auto& sensor = activeSensors.at(SENSOR_ID_CORRIENTE);
+        payload.insert(payload.end(), sensor->data, sensor->data + sensor->dataSize);
+    }
+
+    // --- Sensores Externos (Bits 3+) ---
+    for (int i = 0; i < MAX_SENSORES_EXTERNOS; ++i) {
+        if (activate_byte & (1 << (i + 3))) {
+            uint8_t current_sensor_id = SENSOR_ID_EXT_START + i;
+            const auto& sensor = activeSensors.at(current_sensor_id);
+            payload.insert(payload.end(), sensor->data, sensor->data + sensor->dataSize);
+        }
+    }
+
+    return payload;
+}
+
+
 // ==================== LORA CONFIG ====================
 // Deshabilitar ventana RX de recepción (si no se esperan downlinks)
-#define DISABLE_INVERT_IQ_ON_RX 1
-#define DISABLE_RX 1
-#define CFG_sx1272_radio 1
+//#define DISABLE_INVERT_IQ_ON_RX 1
+//#define DISABLE_RX 1
+//#define CFG_sx1272_radio 1
 
 // Funciones de configuración LoRa (placeholders)
 void os_getArtEui(u1_t *buf) { memset(buf, 0, 8); }
@@ -700,8 +865,16 @@ void tareaLoRa(void *pvParameters) {
     while (true) {
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
             // Espera semáforo antes de enviar
-            xSemaphoreTake(semaforoEnvioCompleto, portMAX_DELAY);
-            LMIC_setTxData2(1, frag.data, frag.len, 0);
+            //xSemaphoreTake(semaforoEnvioCompleto, portMAX_DELAY);
+            Serial.printf("[LORA] Enviando fragmento de %u bytes...\n", frag.len);
+            Serial.println("[LORA] Datos:");
+            for (size_t i = 0; i < frag.len; i++) {
+                Serial.print("0x");
+                if (frag.data[i] < 0x10) Serial.print("0");
+                Serial.print(frag.data[i], HEX);
+                Serial.print(",");
+            }
+            //LMIC_setTxData2(1, frag.data, frag.len, 0);
         }
         vTaskDelay(pdMS_TO_TICKS(10)); // sólo lógica propia, no runloop
     }
@@ -712,6 +885,66 @@ void tareaRunLoop(void *pvParameters) {
     while (true) {
         os_runloop_once();
         vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+#define AGGREGATION_WINDOW_MS 300
+
+/**
+ * @brief Tarea que recolecta datos de sensores durante una ventana de tiempo
+ * y los empaqueta en un solo payload para LoRaWAN.
+ */
+void DataAggregatorTask(void *pvParameters) {
+    std::vector<SensorDataPayload> collectedPayloads;
+    SensorDataPayload incomingPayload;
+    uint8_t ID_MSG = 0x00;
+    while (true) {
+        // 1. Esperar indefinidamente por el PRIMER paquete de datos
+        if (xQueueReceive(queueSensorDataPayload, &incomingPayload, portMAX_DELAY) == pdTRUE) {
+            
+            collectedPayloads.clear();
+            collectedPayloads.push_back(incomingPayload);
+            Serial.printf("[Agregador] Recibido primer payload (Slave %u). Iniciando ventana de %d ms.\n", incomingPayload.slaveId, AGGREGATION_WINDOW_MS);
+
+            // 2. Iniciar la ventana de tiempo para recolectar más paquetes
+            uint32_t windowStartTime = millis();
+            uint32_t remainingTime = AGGREGATION_WINDOW_MS;
+
+            while (remainingTime > 0) {
+                // Esperar por más paquetes, pero solo por el tiempo restante
+                if (xQueueReceive(queueSensorDataPayload, &incomingPayload, pdMS_TO_TICKS(remainingTime)) == pdTRUE) {
+                    collectedPayloads.push_back(incomingPayload);
+                    Serial.printf("[Agregador] Recibido payload adicional (Slave %u) dentro de la ventana.\n", incomingPayload.slaveId);
+                }
+                
+                // Actualizar el tiempo restante
+                uint32_t elapsedTime = millis() - windowStartTime;
+                if (elapsedTime >= AGGREGATION_WINDOW_MS) {
+                    remainingTime = 0;
+                } else {
+                    remainingTime = AGGREGATION_WINDOW_MS - elapsedTime;
+                }
+            }
+
+            // 3. La ventana de tiempo ha terminado. Empaquetar y enviar.
+            Serial.printf("[Agregador] Ventana cerrada. Empaquetando %u payloads para LoRa.\n", collectedPayloads.size());
+            
+            // --- NUEVO: Construir el payload unificado ---
+            std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, collectedPayloads); // 0x01 = ejemplo de ID_MSG
+
+            Fragmento loraFragment;
+            loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
+            memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
+
+            // 4. Enviar el fragmento a la tarea LoRa
+            if (loraFragment.len > 0) {
+                if (xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    Serial.printf("[Agregador] Fragmento LoRa de %u bytes enviado a la cola.\n", loraFragment.len);
+                } else {
+                    Serial.println("[Agregador] ERROR: No se pudo encolar el fragmento LoRa.");
+                }
+            }
+        }
     }
 }
 
@@ -748,7 +981,7 @@ void setup() {
 
     xTaskCreatePinnedToCore(DataFormatter, "DataFormatter", 4096, NULL, 2, NULL, 0);
 
-    xTaskCreatePinnedToCore(DataPrinterTask, "DataPrinter", 4096, NULL, 2, NULL, 0);
+    //xTaskCreatePinnedToCore(DataPrinterTask, "DataPrinter", 4096, NULL, 2, NULL, 0);
 
     // --- INICIAR DESCUBRIMIENTO ---
     // Creamos una tarea solo para el descubrimiento. Se ejecutará una vez y se borrará.
@@ -769,15 +1002,7 @@ void setup() {
     // Creación de tarea LoRa en el núcleo 1
     xTaskCreatePinnedToCore(tareaLoRa, "LoRaTask", 2048, NULL, 5, NULL, 1); // 4KB y prioridad 5
 
-    // Ejemplo: Enviar un paquete de prueba después de 5 segundos
-    delay(5000);
-    Fragmento testFrag;
-    const char* mensaje = "Hola LoRa , 128qedsdsadasdasdsadsadsadsadsadsafsdfsdffs!";
-    testFrag.len = strlen(mensaje);
-    memcpy(testFrag.data, mensaje, testFrag.len);
-    if (xQueueSend(queueFragmentos, &testFrag, pdMS_TO_TICKS(100)) == pdPASS) {
-        Serial.println("Fragmento de prueba enviado a la cola.");
-    }
+    xTaskCreatePinnedToCore(DataAggregatorTask, "DataAggregator", 4096, NULL, 3, NULL, 1);
 }
 
 void loop() {
