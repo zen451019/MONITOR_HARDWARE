@@ -4,27 +4,41 @@
 #include "HardwareSerial.h"
 #include "ModbusServerRTU.h"
 
+// Define un objeto HardwareSerial para el UART2
+HardwareSerial ModbusSerial(1);
+
 // =================================================================
 // --- CONFIGURACIÓN COMBINADA ---
 // =================================================================
 // Configuración ADS1015
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
-#define ADS_ALERT_PIN 4
+// #define I2C_SDA_PIN 21
+// #define I2C_SCL_PIN 22
+// #define ADS_ALERT_PIN 4
+#define I2C_SDA_PIN 9
+#define I2C_SCL_PIN 8
+#define ADS_ALERT_PIN 10
 const int NUM_CHANNELS = 3;
 const int FIFO_SIZE = 320;
-const int PROCESS_INTERVAL_MS = 300;
+const int PROCESS_INTERVAL_MS = 1000; // Intervalo de procesamiento RMS
 const int RMS_HISTORY_SIZE = 100;
 
 // Configuración Modbus
 #define SLAVE_ID 1
-#define NUM_REGISTERS 60  // 5 por canal (3 canales x 5 = 15)
-#define RX_PIN 16
-#define TX_PIN 17
+#define NUM_REGISTERS 18  // 5 por canal (3 canales x 5 = 15)
+// #define RX_PIN 16
+// #define TX_PIN 17
+#define RX_PIN 20
+#define TX_PIN 21
 const int MODBUS_UPDATE_INTERVAL_MS = 300;
 
 // Factor para convertir float RMS a uint16_t
-const float CONVERSION_FACTOR = 100.0f;
+const float CONVERSION_FACTOR = 0.618f;
+
+const float CONVERSION_FACTORS[NUM_CHANNELS] = {
+    0.653f,  // Factor para Canal 0
+    0.679f,  // Factor para Canal 1 (Ejemplo: pon aquí tu valor)
+    1.133f   // Factor para Canal 2 (Ejemplo: pon aquí tu valor)
+};
 
 // =================================================================
 // --- ESTRUCTURAS DE DATOS Y VARIABLES GLOBALES ---
@@ -76,8 +90,21 @@ void task_adquisicion(void *pvParameters) {
             adc_data_ready = false;
             ADC_Sample sample = {ads.getLastConversionResults(), current_isr_channel};
             xQueueSend(queue_adc_samples, &sample, 0);
+            
             current_isr_channel = (current_isr_channel + 1) % NUM_CHANNELS;
-            ads.startADCReading(ADS1X15_REG_CONFIG_MUX_SINGLE_0 + current_isr_channel, false);
+            
+            // --- CORRECCIÓN INICIO ---
+            // Seleccionar explícitamente la constante correcta para cada canal
+            uint16_t mux_config;
+            switch(current_isr_channel) {
+                case 0: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_0; break;
+                case 1: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_1; break;
+                case 2: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_2; break;
+                default: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_0; break;
+            }
+            ads.startADCReading(mux_config, false);
+            // --- CORRECCIÓN FIN ---
+
         } else { vTaskDelay(1); }
     }
 }
@@ -172,7 +199,11 @@ void dataUpdateTask(void *pvParameters) {
             for (int ch = 0; ch < NUM_CHANNELS; ch++) {
                 for (int i = 0; i < samples_per_channel; i++) {
                     int idx = ch * samples_per_channel + i;
-                    holdingRegisters[idx] = (counts[ch] > i) ? (uint16_t)(rms_channel[ch][i] * CONVERSION_FACTOR) : 0;
+                    
+                    // USAR EL FACTOR ESPECÍFICO DEL CANAL ACTUAL [ch]
+                    float volts = rms_channel[ch][i] * CONVERSION_FACTORS[ch]; 
+                    
+                    holdingRegisters[idx] = (counts[ch] > i) ? (uint16_t)round(volts) : 0;
                 }
             }
 
@@ -193,11 +224,13 @@ struct SensorData {
     uint16_t compressedBytes;       // Solo si dataType= 3
 };
 
-SensorData sensor = {1, 3, 10, NUM_REGISTERS, 300, 1, 1, 0};
+SensorData sensor = {1, 3, 10, NUM_REGISTERS, PROCESS_INTERVAL_MS, 1, 1, 0};
 
 ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
     uint16_t address, words;
     ModbusMessage response;
+    Serial.printf("Modbus Request Received: ServerID=%d, FunctionCode=%d\n",
+                  request.getServerID(), request.getFunctionCode());
 
     request.get(2, address);
     request.get(4, words);
@@ -221,7 +254,7 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
             for (uint16_t i = 0; i < words; ++i) {
-                response.add(holdingRegisters[i]);
+                response.add((uint16_t)holdingRegisters[i]);
             }
             xSemaphoreGive(dataMutex);
         } else {
@@ -257,8 +290,8 @@ void setup() {
     ads.setDataRate(RATE_ADS1015_3300SPS);
 
     // Inicializar Serial2 para Modbus
-    RTUutils::prepareHardwareSerial(Serial2);
-    Serial2.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN);
+    RTUutils::prepareHardwareSerial(ModbusSerial);
+    ModbusSerial.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN);
 
     // Crear colas y mutexes
     queue_adc_samples = xQueueCreate(FIFO_SIZE, sizeof(ADC_Sample));
@@ -279,9 +312,9 @@ void setup() {
     MBserver.setModbusTimeout(2000);
 
     // Crear tareas
-    xTaskCreatePinnedToCore(task_adquisicion, "TaskAdquisicion", 4096, NULL, 5, NULL, 1);  // Núcleo 1
+    xTaskCreatePinnedToCore(task_adquisicion, "TaskAdquisicion", 4096, NULL, 5, NULL, 0);  // Núcleo 1
     xTaskCreatePinnedToCore(task_procesamiento, "TaskProcesamiento", 4096, NULL, 3, NULL, 0);  // Núcleo 0
-    MBserver.begin(Serial2, 0);  // Modbus en Núcleo 0
+    MBserver.begin(ModbusSerial, 0);  // Modbus en Núcleo 0
     xTaskCreatePinnedToCore(dataUpdateTask, "DataUpdateTask", 2048, NULL, 1, &dataUpdateTaskHandle, 0);  // Núcleo 0
 
     Serial.println("INFO: Setup completado.");
@@ -293,9 +326,9 @@ void loop() {
     Serial.println("Loop principal activo...");
 
     // Demo: Mostrar algunos valores RMS (opcional, para debug)
-    const int num_datos = 5;
+    const int num_datos = 6;
     float datos_ch1[num_datos];
-    int obtenidos = get_rms_history(1, datos_ch1, num_datos);
+    int obtenidos = get_rms_history(2, datos_ch1, num_datos);
     if (obtenidos > 0) {
         Serial.printf("Últimos %d RMS del Canal 1 (en unidades ADC):\n", obtenidos);
         for (int i = 0; i < obtenidos; i++) {

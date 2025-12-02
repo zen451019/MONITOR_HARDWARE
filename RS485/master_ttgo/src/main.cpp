@@ -14,8 +14,8 @@
 // Configuración Modbus RTU
 // =================================================================================================
 
-#define RX_PIN 12
-#define TX_PIN 13
+#define RX_PIN 13
+#define TX_PIN 12
 
 ModbusClientRTU MB;
 
@@ -88,7 +88,7 @@ typedef struct {
     uint8_t data[MAX_MODBUS_RESPONSE_LENGTH];
     size_t length; // número de bytes válidos en data
     uint8_t deviceId; // Opcional: saber a quién corresponde la respuesta
-    uint8_t order;    // Opcional: para correlacionar con la solicitud
+    uint32_t order;    // Opcional: para correlacionar con la solicitud
 } ResponseFormat;
 
 QueueHandle_t queueEventos_Peripheral;
@@ -408,7 +408,8 @@ void EventManager(void *pvParameters) {
             if (getSensorParams(event.slaveId, event.sensorID, startAddr, numRegs)) {
                 functionCode = READ_HOLD_REGISTER;
                 reqType = REQUEST_SAMPLING;
-                err = MB.addRequest(++requestToken, event.slaveId, functionCode, startAddr, numRegs);
+                if (++requestToken == 0) ++requestToken; // Evitar el token 0
+                err = MB.addRequest(requestToken, event.slaveId, functionCode, startAddr, numRegs);
                 requestSent = true;
             } else {
                 Serial.printf("Parámetros no encontrados para SlaveID %u, SensorID %u\n", event.slaveId, event.sensorID);
@@ -417,16 +418,19 @@ void EventManager(void *pvParameters) {
             reqType = REQUEST_DISCOVERY; // Todas las solicitudes de periféricos son de descubrimiento
             if (event.order == DISCOVERY_READ_SENSOR_PARAM) {
                 functionCode = READ_HOLD_REGISTER;          // FC03
-                err = MB.addRequest(++requestToken, event.slaveId, functionCode, 0, 8); // addr=0, qty=8
+                if (++requestToken == 0) ++requestToken; // Evitar el token 0
+                err = MB.addRequest(requestToken, event.slaveId, functionCode, 0, 8); // addr=0, qty=8
                 requestSent = true;
             } else if (event.order == DISCOVERY_GET_COUNT) {
                 functionCode = READ_HOLD_REGISTER;
-                err = MB.addRequest(++requestToken, event.slaveId, functionCode, 0, event.order);
+                if (++requestToken == 0) ++requestToken; // Evitar el token 0
+                err = MB.addRequest(requestToken, event.slaveId, functionCode, 0, event.order);
                 requestSent = true;
             } else if (event.order >= DISCOVERY_GET_DATA_OFFSET) {
                 uint16_t writeValue = event.order - DISCOVERY_GET_DATA_OFFSET;
                 functionCode = READ_HOLD_REGISTER; // Asumiendo que es la misma función
-                err = MB.addRequest(++requestToken, event.slaveId, functionCode, DISCOVERY_GET_COUNT, writeValue);
+                if (++requestToken == 0) ++requestToken; // Evitar el token 0
+                err = MB.addRequest(requestToken, event.slaveId, functionCode, DISCOVERY_GET_COUNT, writeValue);
                 requestSent = true;
             }
         }
@@ -502,6 +506,22 @@ static bool formatAndEnqueueSensorData(const ResponseFormat& response, const Mod
                   slaveId, params.sensorID, params.maxRegisters,
                   params.dataType, params.scale, params.compressedBytes);
 
+    // --- INICIO: Bloque de depuración para imprimir bytes HIGH y LOW ---
+    Serial.print("  [Debug] Bytes HIGH/LOW recibidos: ");
+    // Los datos de registros comienzan en el índice 3 de la respuesta Modbus
+    for (size_t i = 0; i < params.maxRegisters; ++i) {
+        size_t offset = 3 + i * 2;
+        if ((offset + 1) < response.length) {
+            uint8_t high = response.data[offset];
+            uint8_t low  = response.data[offset + 1];
+            Serial.printf("[H:%u, L:%u] ", high, low);
+        } else {
+            break; // Salir si no hay suficientes datos para un par completo
+        }
+    }
+    Serial.println();
+    // --- FIN: Bloque de depuración ---
+
     uint8_t dataType = params.dataType; // 1=uint8, 2=uint16
     uint8_t scale = params.scale;
     uint8_t compressedBytes = params.compressedBytes;
@@ -568,6 +588,33 @@ void DataFormatter (void *pvParameters) {
 
             if (request && request->token != 0) {
                 Serial.printf("Respuesta recibida para Token %u (Esclavo %u)\n", request->token, request->slaveId);
+                
+                /*
+                // IMPRIMIR DATA RAW EN DECIMAL (SECCIÓN DE DEPURACIÓN COMENTADA)
+                Serial.println("=== DATA RAW RECIBIDA ===");  
+                Serial.printf("Esclavo: %u, Longitud: %u bytes\n", response.deviceId, response.length);
+                Serial.print("Data (decimal): ");
+                for (size_t i = 0; i < response.length; i++) {
+                    Serial.print(response.data[i]);
+                    if (i < response.length - 1) Serial.print(", ");
+                }
+                Serial.println();
+                
+                // También mostrar los registros Modbus decodificados si es muestreo
+                if (request->type == REQUEST_SAMPLING && response.length >= 5) {
+                    Serial.print("Registros Modbus (decimal): ");
+                    for (size_t i = 3; i < response.length; i += 2) {
+                        if ((i + 1) < response.length) {
+                            uint16_t reg = (response.data[i] << 8) | response.data[i + 1];
+                            Serial.print(reg);
+                            if ((i + 2) < response.length) Serial.print(", ");
+                        }
+                    }
+                    Serial.println();
+                }
+                Serial.println("=========================");
+                */
+                
                 std::vector<uint8_t> values;
                 // Diferenciar el tratamiento según el tipo de solicitud
                 switch (request->type) {
@@ -588,7 +635,6 @@ void DataFormatter (void *pvParameters) {
                             SensorDataPayload payload;
                             payload.slaveId = request->slaveId;
                             payload.sensorId = request->sensorId;
-
 
                             // Copiar los datos de forma segura
                             payload.dataSize = std::min(values.size(), (size_t)MAX_SENSOR_PAYLOAD);
@@ -737,7 +783,7 @@ std::vector<uint8_t> construirPayloadUnificado(
         //optener Data Length Bytes
         uint8_t len_data = getRegistersPerChannel(sensor->slaveId, sensor->sensorId);
         // Asumimos formato del ejemplo: PKD (Bit 7), No 2BIT
-        uint8_t len_byte = 0x80 | (len_data & 0x1F);
+        uint8_t len_byte = (len_data & 0x1F);
         payload.push_back(len_byte);
     }
 
@@ -771,7 +817,7 @@ std::vector<uint8_t> construirPayloadUnificado(
         const auto& sensor = activeSensors.at(SENSOR_ID_VOLTAJE);
         payload.insert(payload.end(), sensor->data, sensor->data + sensor->dataSize);
     }
-
+    
     // --- Corriente (Bit 2) ---
     if (activate_byte & (1 << 2)) {
         const auto& sensor = activeSensors.at(SENSOR_ID_CORRIENTE);
@@ -802,12 +848,17 @@ void os_getArtEui(u1_t *buf) { memset(buf, 0, 8); }
 void os_getDevEui(u1_t *buf) { memset(buf, 0, 8); }
 void os_getDevKey(u1_t *buf) { memset(buf, 0, 16); }
 
-// Claves de red y dispositivo (reemplaza con tus valores reales)
-static u1_t NWKSKEY[16] = {0x49, 0x78, 0xCB, 0x8E, 0x7F, 0xFB, 0xD4, 0x6B,
-                           0xC5, 0x70, 0xFE, 0x11, 0xF1, 0x7F, 0xA5, 0x6E};
-static u1_t APPSKEY[16] = {0x53, 0xC0, 0x20, 0x84, 0x14, 0x86, 0x26, 0x39,
-                           0x81, 0xFA, 0x77, 0x35, 0x5D, 0x27, 0x87, 0x62};
-static const u4_t DEVADDR = 0x260CB229;
+static u1_t NWKSKEY[16] = {
+    0xC2, 0x5B, 0x0A, 0x78, 0xA8, 0x0A, 0x63, 0x1D,
+    0x86, 0xC8, 0x1B, 0xA3, 0x3A, 0x9E, 0x36, 0xEF
+};
+
+static u1_t APPSKEY[16] = {
+    0x42, 0x8F, 0x67, 0xFA, 0xD7, 0xD7, 0x4A, 0x85,
+    0x3C, 0x10, 0x80, 0x5F, 0x10, 0x1A, 0x0E, 0x14
+};
+
+static const u4_t DEVADDR = 0x260C691F;
 
 // Configuración de pines LoRa
 const lmic_pinmap lmic_pins = {.nss = 18,
@@ -865,7 +916,7 @@ void tareaLoRa(void *pvParameters) {
     while (true) {
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
             // Espera semáforo antes de enviar
-            //xSemaphoreTake(semaforoEnvioCompleto, portMAX_DELAY);
+            xSemaphoreTake(semaforoEnvioCompleto, portMAX_DELAY);
             Serial.printf("[LORA] Enviando fragmento de %u bytes...\n", frag.len);
             Serial.println("[LORA] Datos:");
             for (size_t i = 0; i < frag.len; i++) {
@@ -874,7 +925,7 @@ void tareaLoRa(void *pvParameters) {
                 Serial.print(frag.data[i], HEX);
                 Serial.print(",");
             }
-            //LMIC_setTxData2(1, frag.data, frag.len, 0);
+            LMIC_setTxData2(1, frag.data, frag.len, 0);
         }
         vTaskDelay(pdMS_TO_TICKS(10)); // sólo lógica propia, no runloop
     }
@@ -888,50 +939,41 @@ void tareaRunLoop(void *pvParameters) {
     }
 }
 
-#define AGGREGATION_WINDOW_MS 300
+#define AGGREGATION_INTERVAL_MS 6100 // Intervalo de 6s + 100ms de margen
 
 /**
- * @brief Tarea que recolecta datos de sensores durante una ventana de tiempo
- * y los empaqueta en un solo payload para LoRaWAN.
+ * @brief Tarea proactiva que recolecta y empaqueta datos de sensores a un ritmo fijo.
+ * Se despierta cada AGGREGATION_INTERVAL_MS, vacía la cola de datos y envía un
+ * único payload LoRaWAN si ha recolectado algo.
  */
 void DataAggregatorTask(void *pvParameters) {
     std::vector<SensorDataPayload> collectedPayloads;
     SensorDataPayload incomingPayload;
     uint8_t ID_MSG = 0x00;
+    const TickType_t aggregationCycle = pdMS_TO_TICKS(AGGREGATION_INTERVAL_MS);
+
     while (true) {
-        // 1. Esperar indefinidamente por el PRIMER paquete de datos
-        if (xQueueReceive(queueSensorDataPayload, &incomingPayload, portMAX_DELAY) == pdTRUE) {
-            
-            collectedPayloads.clear();
+        // 1. Esperar el ciclo de agregación completo.
+        vTaskDelay(aggregationCycle);
+        Serial.printf("\n[Agregador] Ciclo de agregación iniciado. Recolectando datos de la cola...\n");
+
+        collectedPayloads.clear();
+
+        // 2. Vaciar la cola: recolectar todos los payloads que hayan llegado.
+        // Se usa un timeout de 0 para no bloquear y salir inmediatamente si la cola está vacía.
+        while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
             collectedPayloads.push_back(incomingPayload);
-            Serial.printf("[Agregador] Recibido primer payload (Slave %u). Iniciando ventana de %d ms.\n", incomingPayload.slaveId, AGGREGATION_WINDOW_MS);
+            Serial.printf("[Agregador] Recolectado payload de Slave %u, Sensor %u.\n", incomingPayload.slaveId, incomingPayload.sensorId);
+        }
 
-            // 2. Iniciar la ventana de tiempo para recolectar más paquetes
-            uint32_t windowStartTime = millis();
-            uint32_t remainingTime = AGGREGATION_WINDOW_MS;
+        // 3. Si se recolectaron datos, empaquetar y enviar.
+        if (!collectedPayloads.empty()) {
+            Serial.printf("[Agregador] Recolección finalizada. Empaquetando %u payloads para LoRa.\n", collectedPayloads.size());
 
-            while (remainingTime > 0) {
-                // Esperar por más paquetes, pero solo por el tiempo restante
-                if (xQueueReceive(queueSensorDataPayload, &incomingPayload, pdMS_TO_TICKS(remainingTime)) == pdTRUE) {
-                    collectedPayloads.push_back(incomingPayload);
-                    Serial.printf("[Agregador] Recibido payload adicional (Slave %u) dentro de la ventana.\n", incomingPayload.slaveId);
-                }
-                
-                // Actualizar el tiempo restante
-                uint32_t elapsedTime = millis() - windowStartTime;
-                if (elapsedTime >= AGGREGATION_WINDOW_MS) {
-                    remainingTime = 0;
-                } else {
-                    remainingTime = AGGREGATION_WINDOW_MS - elapsedTime;
-                }
-            }
+            // Construir el payload unificado
+            std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, collectedPayloads);
 
-            // 3. La ventana de tiempo ha terminado. Empaquetar y enviar.
-            Serial.printf("[Agregador] Ventana cerrada. Empaquetando %u payloads para LoRa.\n", collectedPayloads.size());
-            
-            // --- NUEVO: Construir el payload unificado ---
-            std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, collectedPayloads); // 0x01 = ejemplo de ID_MSG
-
+            // Preparar el fragmento para la tarea LoRa
             Fragmento loraFragment;
             loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
             memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
@@ -944,6 +986,9 @@ void DataAggregatorTask(void *pvParameters) {
                     Serial.println("[Agregador] ERROR: No se pudo encolar el fragmento LoRa.");
                 }
             }
+        } else {
+            // Si no se recolectó nada, simplemente se informa y se espera al siguiente ciclo.
+            Serial.println("[Agregador] No se encontraron payloads en este ciclo. Esperando al siguiente.");
         }
     }
 }
