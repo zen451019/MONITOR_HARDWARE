@@ -12,3 +12,11 @@ https://zen451019.github.io/MONITOR_HARDWARE/English/MASTER_MODBUS/html/index.ht
 
 Spanish
 https://zen451019.github.io/MONITOR_HARDWARE/Español/MASTER_MODBUS/html/index.html
+
+
+## Modbus slave monitor documentation
+English
+https://zen451019.github.io/MONITOR_HARDWARE/English/SLAVE_MODBUS/html/index.html
+
+Spanish
+https://zen451019.github.io/MONITOR_HARDWARE/Español/SLAVE_MODBUS/html/index.html
