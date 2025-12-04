@@ -101,15 +101,15 @@ $(function(){initNavTree('group__group__modbus__discovery.html','',''); });
 <tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
 <tr class="memitem:ModbusSensorParam" id="r_ModbusSensorParam"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct_modbus_sensor_param.html">ModbusSensorParam</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Define los parámetros de configuración de un sensor individual.  <a href="struct_modbus_sensor_param.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Defines the configuration parameters for an individual sensor.  <a href="struct_modbus_sensor_param.html#details">More...</a><br /></td></tr>
 <tr class="memitem:ModbusSlaveParam" id="r_ModbusSlaveParam"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct_modbus_slave_param.html">ModbusSlaveParam</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Vector global que almacena la configuración y estado de todos los esclavos Modbus descubiertos.  <a href="struct_modbus_slave_param.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Global vector that stores the configuration and state of all discovered Modbus slaves.  <a href="struct_modbus_slave_param.html#details">More...</a><br /></td></tr>
 <tr class="memitem:ModbusRequestInfo" id="r_ModbusRequestInfo"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct_modbus_request_info.html">ModbusRequestInfo</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Contexto de una solicitud Modbus en vuelo.  <a href="struct_modbus_request_info.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Context of an in-flight Modbus request.  <a href="struct_modbus_request_info.html#details">More...</a><br /></td></tr>
 <tr class="memitem:ResponseFormat" id="r_ResponseFormat"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct_response_format.html">ResponseFormat</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Estructura intermedia para pasar datos desde el callback Modbus a las tareas.  <a href="struct_response_format.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Intermediate structure to pass data from the Modbus callback to tasks.  <a href="struct_response_format.html#details">More...</a><br /></td></tr>
 <tr class="memitem:SensorSchedule" id="r_SensorSchedule"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct_sensor_schedule.html">SensorSchedule</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Elemento de planificación para el muestreo de sensores.  <a href="struct_sensor_schedule.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Planning element for sensor sampling.  <a href="struct_sensor_schedule.html#details">More...</a><br /></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
 Macros</h2></td></tr>
@@ -117,10 +117,10 @@ Macros</h2></td></tr>
 <tr class="memdesc:gaa7089c01538b339ae745173c117f95b9"><td class="mdescLeft">&#160;</td><td class="mdescRight">&lt; Utilidades de memoria (memcpy).  <br /></td></tr>
 <tr class="memitem:ga3bb17f5daa2b1eaef58c8aa2d989e27e" id="r_ga3bb17f5daa2b1eaef58c8aa2d989e27e"><td class="memItemLeft" align="right" valign="top"><a id="ga3bb17f5daa2b1eaef58c8aa2d989e27e" name="ga3bb17f5daa2b1eaef58c8aa2d989e27e"></a>
 #define&#160;</td><td class="memItemRight" valign="bottom"><b>TX_PIN</b>&#160;&#160;&#160;12</td></tr>
-<tr class="memdesc:ga3bb17f5daa2b1eaef58c8aa2d989e27e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Pin de transmisión UART para RS485. <br /></td></tr>
+<tr class="memdesc:ga3bb17f5daa2b1eaef58c8aa2d989e27e"><td class="mdescLeft">&#160;</td><td class="mdescRight">UART transmission pin for RS485. <br /></td></tr>
 <tr class="memitem:ga7f49ab031357b041f1760f2092028d70" id="r_ga7f49ab031357b041f1760f2092028d70"><td class="memItemLeft" align="right" valign="top"><a id="ga7f49ab031357b041f1760f2092028d70" name="ga7f49ab031357b041f1760f2092028d70"></a>
 #define&#160;</td><td class="memItemRight" valign="bottom"><b>MAX_MODBUS_RESPONSE_LENGTH</b>&#160;&#160;&#160;256</td></tr>
-<tr class="memdesc:ga7f49ab031357b041f1760f2092028d70"><td class="mdescLeft">&#160;</td><td class="mdescRight">Longitud máxima esperada para una respuesta Modbus. <br /></td></tr>
+<tr class="memdesc:ga7f49ab031357b041f1760f2092028d70"><td class="mdescLeft">&#160;</td><td class="mdescRight">Maximum expected length for a Modbus response. <br /></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-enum-members" class="groupheader"><a id="enum-members" name="enum-members"></a>
 Enumerations</h2></td></tr>
@@ -128,51 +128,51 @@ Enumerations</h2></td></tr>
 , <a class="el" href="#ga46a07d73c79d4b8999372b819403da58a7a182e1d066bf8f45714fb1d7f0549e1">DISCOVERY_GET_DATA_OFFSET</a> = 255
 , <a class="el" href="#ga46a07d73c79d4b8999372b819403da58aea7e33cbb3a664bdb9a7e871353aa21e">DISCOVERY_READ_SENSOR_PARAM</a> = 8
  }</td></tr>
-<tr class="memdesc:ga46a07d73c79d4b8999372b819403da58"><td class="mdescLeft">&#160;</td><td class="mdescRight">Comandos especiales utilizados durante la fase de descubrimiento de sensores.  <a href="#ga46a07d73c79d4b8999372b819403da58">More...</a><br /></td></tr>
+<tr class="memdesc:ga46a07d73c79d4b8999372b819403da58"><td class="mdescLeft">&#160;</td><td class="mdescRight">Special commands used during the sensor discovery phase.  <a href="#ga46a07d73c79d4b8999372b819403da58">More...</a><br /></td></tr>
 <tr class="memitem:gae10b07f2d0feb103db7fe4cfd192e5af" id="r_gae10b07f2d0feb103db7fe4cfd192e5af"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5af">RequestType</a> { <a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5afacc059c796c5ae2d0205ad730768999b7">REQUEST_UNKNOWN</a>
 , <a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5afa3232d13dce2d61800581b3b1c0b1611d">REQUEST_DISCOVERY</a>
 , <a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5afa5ade4fdadde8b1ec2bc10668653efa7b">REQUEST_SAMPLING</a>
  }</td></tr>
-<tr class="memdesc:gae10b07f2d0feb103db7fe4cfd192e5af"><td class="mdescLeft">&#160;</td><td class="mdescRight">Clasificación del propósito de una solicitud Modbus.  <a href="#gae10b07f2d0feb103db7fe4cfd192e5af">More...</a><br /></td></tr>
+<tr class="memdesc:gae10b07f2d0feb103db7fe4cfd192e5af"><td class="mdescLeft">&#160;</td><td class="mdescRight">Classification of the purpose of a Modbus request.  <a href="#gae10b07f2d0feb103db7fe4cfd192e5af">More...</a><br /></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
 <tr class="memitem:ga2b6bd4e110caa560464cc252a7dc787f" id="r_ga2b6bd4e110caa560464cc252a7dc787f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga2b6bd4e110caa560464cc252a7dc787f">addRequest</a> (uint32_t token, uint8_t slaveId, uint8_t sensorId, uint8_t functionCode, <a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5af">RequestType</a> type)</td></tr>
-<tr class="memdesc:ga2b6bd4e110caa560464cc252a7dc787f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Registra una nueva solicitud en el buffer circular.  <br /></td></tr>
+<tr class="memdesc:ga2b6bd4e110caa560464cc252a7dc787f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Registers a new request in the circular buffer.  <br /></td></tr>
 <tr class="memitem:ga5e9b156cfc98d9c060bfd23770ed3590" id="r_ga5e9b156cfc98d9c060bfd23770ed3590"><td class="memItemLeft" align="right" valign="top"><a class="el" href="struct_modbus_request_info.html">ModbusRequestInfo</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga5e9b156cfc98d9c060bfd23770ed3590">findRequestByToken</a> (uint32_t token)</td></tr>
-<tr class="memdesc:ga5e9b156cfc98d9c060bfd23770ed3590"><td class="mdescLeft">&#160;</td><td class="mdescRight">Busca una solicitud pendiente por su token.  <br /></td></tr>
+<tr class="memdesc:ga5e9b156cfc98d9c060bfd23770ed3590"><td class="mdescLeft">&#160;</td><td class="mdescRight">Searches for a pending request by its token.  <br /></td></tr>
 <tr class="memitem:gaec0c4943af093ad42d2d099ceeadb98c" id="r_gaec0c4943af093ad42d2d099ceeadb98c"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gaec0c4943af093ad42d2d099ceeadb98c">initScheduler</a> ()</td></tr>
-<tr class="memdesc:gaec0c4943af093ad42d2d099ceeadb98c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Inicializa o actualiza la lista de planificación (Scheduler).  <br /></td></tr>
+<tr class="memdesc:gaec0c4943af093ad42d2d099ceeadb98c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes or updates the scheduling list (Scheduler).  <br /></td></tr>
 <tr class="memitem:gae13ecbdf143b216f696e59a9b7edb141" id="r_gae13ecbdf143b216f696e59a9b7edb141"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141">handleData</a> (ModbusMessage response, uint32_t token)</td></tr>
-<tr class="memdesc:gae13ecbdf143b216f696e59a9b7edb141"><td class="mdescLeft">&#160;</td><td class="mdescRight">Callback ejecutado al recibir datos Modbus válidos.  <br /></td></tr>
+<tr class="memdesc:gae13ecbdf143b216f696e59a9b7edb141"><td class="mdescLeft">&#160;</td><td class="mdescRight">Callback executed upon receiving valid Modbus data.  <br /></td></tr>
 <tr class="memitem:ga944f73ca5a3437229e84a3317d2a1634" id="r_ga944f73ca5a3437229e84a3317d2a1634"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634">handleError</a> (Error error, uint32_t token)</td></tr>
-<tr class="memdesc:ga944f73ca5a3437229e84a3317d2a1634"><td class="mdescLeft">&#160;</td><td class="mdescRight">Callback ejecutado al ocurrir un error Modbus.  <br /></td></tr>
+<tr class="memdesc:ga944f73ca5a3437229e84a3317d2a1634"><td class="mdescLeft">&#160;</td><td class="mdescRight">Callback executed when a Modbus error occurs.  <br /></td></tr>
 <tr class="memitem:ga86b51577aeff55acd47a303f408339ea" id="r_ga86b51577aeff55acd47a303f408339ea"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga86b51577aeff55acd47a303f408339ea">discoverDeviceSensors</a> (uint8_t deviceId)</td></tr>
-<tr class="memdesc:ga86b51577aeff55acd47a303f408339ea"><td class="mdescLeft">&#160;</td><td class="mdescRight">Inicia el proceso de descubrimiento para un dispositivo específico.  <br /></td></tr>
+<tr class="memdesc:ga86b51577aeff55acd47a303f408339ea"><td class="mdescLeft">&#160;</td><td class="mdescRight">Starts the discovery process for a specific device.  <br /></td></tr>
 <tr class="memitem:gab0e674715eff7261b0ae3a35fe239be4" id="r_gab0e674715eff7261b0ae3a35fe239be4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gab0e674715eff7261b0ae3a35fe239be4">initialDiscoveryTask</a> (void *pvParameters)</td></tr>
-<tr class="memdesc:gab0e674715eff7261b0ae3a35fe239be4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Tarea de un solo uso para el descubrimiento inicial de sensores.  <br /></td></tr>
+<tr class="memdesc:gab0e674715eff7261b0ae3a35fe239be4"><td class="mdescLeft">&#160;</td><td class="mdescRight">One-shot task for the initial discovery of sensors.  <br /></td></tr>
 <tr class="memitem:gafe37cc62bf5e1b7be5d4b906edac7444" id="r_gafe37cc62bf5e1b7be5d4b906edac7444"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gafe37cc62bf5e1b7be5d4b906edac7444">DataRequestScheduler</a> (void *pvParameters)</td></tr>
-<tr class="memdesc:gafe37cc62bf5e1b7be5d4b906edac7444"><td class="mdescLeft">&#160;</td><td class="mdescRight">Tarea principal del Planificador (Scheduler).  <br /></td></tr>
+<tr class="memdesc:gafe37cc62bf5e1b7be5d4b906edac7444"><td class="mdescLeft">&#160;</td><td class="mdescRight">Main task of the Scheduler.  <br /></td></tr>
 <tr class="memitem:ga320e20ed89286bb200de38e3c0d74cde" id="r_ga320e20ed89286bb200de38e3c0d74cde"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga320e20ed89286bb200de38e3c0d74cde">getSensorParams</a> (uint8_t slaveId, uint8_t sensorID, uint16_t &amp;startAddr, uint16_t &amp;numRegs)</td></tr>
-<tr class="memdesc:ga320e20ed89286bb200de38e3c0d74cde"><td class="mdescLeft">&#160;</td><td class="mdescRight">Obtiene los parámetros de configuración de un sensor específico.  <br /></td></tr>
+<tr class="memdesc:ga320e20ed89286bb200de38e3c0d74cde"><td class="mdescLeft">&#160;</td><td class="mdescRight">Gets the configuration parameters of a specific sensor.  <br /></td></tr>
 <tr class="memitem:ga8a81627d82ccf43aef00a4023d2d6e55" id="r_ga8a81627d82ccf43aef00a4023d2d6e55"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga8a81627d82ccf43aef00a4023d2d6e55">getRegistersPerChannel</a> (uint8_t slaveId, uint8_t sensorID)</td></tr>
-<tr class="memdesc:ga8a81627d82ccf43aef00a4023d2d6e55"><td class="mdescLeft">&#160;</td><td class="mdescRight">Calcula el número de registros por canal para un sensor.  <br /></td></tr>
+<tr class="memdesc:ga8a81627d82ccf43aef00a4023d2d6e55"><td class="mdescLeft">&#160;</td><td class="mdescRight">Calculates the number of registers per channel for a sensor.  <br /></td></tr>
 <tr class="memitem:gacd852b44946c142cee5128d699ead65a" id="r_gacd852b44946c142cee5128d699ead65a"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gacd852b44946c142cee5128d699ead65a">parseAndStoreDiscoveryResponse</a> (const <a class="el" href="struct_response_format.html">ResponseFormat</a> &amp;response, uint8_t slaveId)</td></tr>
-<tr class="memdesc:gacd852b44946c142cee5128d699ead65a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Parsea la respuesta de descubrimiento y actualiza la lista de esclavos.  <br /></td></tr>
+<tr class="memdesc:gacd852b44946c142cee5128d699ead65a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Parses the discovery response and updates the slave list.  <br /></td></tr>
 <tr class="memitem:gac0c8aeee251d675a0300a1e3be22e9fe" id="r_gac0c8aeee251d675a0300a1e3be22e9fe"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gac0c8aeee251d675a0300a1e3be22e9fe">EventManager</a> (void *pvParameters)</td></tr>
-<tr class="memdesc:gac0c8aeee251d675a0300a1e3be22e9fe"><td class="mdescLeft">&#160;</td><td class="mdescRight">Tarea Gestor de Eventos.  <br /></td></tr>
+<tr class="memdesc:gac0c8aeee251d675a0300a1e3be22e9fe"><td class="mdescLeft">&#160;</td><td class="mdescRight">Event Manager task.  <br /></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-var-members" class="groupheader"><a id="var-members" name="var-members"></a>
 Variables</h2></td></tr>
 <tr class="memitem:gafba4fdd67a5d79a0cdbf6d3652ccb5b5" id="r_gafba4fdd67a5d79a0cdbf6d3652ccb5b5"><td class="memItemLeft" align="right" valign="top"><a id="gafba4fdd67a5d79a0cdbf6d3652ccb5b5" name="gafba4fdd67a5d79a0cdbf6d3652ccb5b5"></a>
 ModbusClientRTU&#160;</td><td class="memItemRight" valign="bottom"><b>MB</b></td></tr>
-<tr class="memdesc:gafba4fdd67a5d79a0cdbf6d3652ccb5b5"><td class="mdescLeft">&#160;</td><td class="mdescRight">Instancia global del cliente Modbus RTU. <br /></td></tr>
+<tr class="memdesc:gafba4fdd67a5d79a0cdbf6d3652ccb5b5"><td class="mdescLeft">&#160;</td><td class="mdescRight">Global instance of the Modbus RTU client. <br /></td></tr>
 <tr class="memitem:gaa744737f20ae412448361b8aa57d8efb" id="r_gaa744737f20ae412448361b8aa57d8efb"><td class="memItemLeft" align="right" valign="top"><a id="gaa744737f20ae412448361b8aa57d8efb" name="gaa744737f20ae412448361b8aa57d8efb"></a>
 QueueHandle_t&#160;</td><td class="memItemRight" valign="bottom"><b>queueRespuestas</b></td></tr>
-<tr class="memdesc:gaa744737f20ae412448361b8aa57d8efb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Cola de respuestas Modbus recibidas. <br /></td></tr>
+<tr class="memdesc:gaa744737f20ae412448361b8aa57d8efb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Queue for received Modbus responses. <br /></td></tr>
 <tr class="memitem:gab204d0e5b1e10f59187110e07d7782b4" id="r_gab204d0e5b1e10f59187110e07d7782b4"><td class="memItemLeft" align="right" valign="top"><a id="gab204d0e5b1e10f59187110e07d7782b4" name="gab204d0e5b1e10f59187110e07d7782b4"></a>
 QueueHandle_t&#160;</td><td class="memItemRight" valign="bottom"><b>queueEventos_Peripheral</b></td></tr>
-<tr class="memdesc:gab204d0e5b1e10f59187110e07d7782b4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Colas de eventos hacia el EventManager (periféricos y scheduler). <br /></td></tr>
+<tr class="memdesc:gab204d0e5b1e10f59187110e07d7782b4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Event queues to the EventManager (peripherals and scheduler). <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <h1 class="doxsection"><a class="anchor" id="group_modbus_overview"></a>
@@ -187,60 +187,60 @@ Overview</h1>
 Structure and components</h1>
 <ul>
 <li>Data and configuration<ul>
-<li><a class="el" href="struct_modbus_sensor_param.html" title="Define los parámetros de configuración de un sensor individual.">ModbusSensorParam</a>, <a class="el" href="struct_modbus_slave_param.html" title="Vector global que almacena la configuración y estado de todos los esclavos Modbus descubiertos.">ModbusSlaveParam</a>: sensor and slave definitions.</li>
-<li><a class="el" href="struct_sensor_schedule.html" title="Elemento de planificación para el muestreo de sensores.">SensorSchedule</a>: sampling scheduler entries.</li>
-<li><a class="el" href="struct_response_format.html" title="Estructura intermedia para pasar datos desde el callback Modbus a las tareas.">ResponseFormat</a>: internal response transport from callbacks.</li>
+<li><a class="el" href="struct_modbus_sensor_param.html" title="Defines the configuration parameters for an individual sensor.">ModbusSensorParam</a>, <a class="el" href="struct_modbus_slave_param.html" title="Global vector that stores the configuration and state of all discovered Modbus slaves.">ModbusSlaveParam</a>: sensor and slave definitions.</li>
+<li><a class="el" href="struct_sensor_schedule.html" title="Planning element for sensor sampling.">SensorSchedule</a>: sampling scheduler entries.</li>
+<li><a class="el" href="struct_response_format.html" title="Intermediate structure to pass data from the Modbus callback to tasks.">ResponseFormat</a>: internal response transport from callbacks.</li>
 </ul>
 </li>
 <li>Requests and correlation<ul>
-<li><a class="el" href="struct_modbus_request_info.html" title="Contexto de una solicitud Modbus en vuelo.">ModbusRequestInfo</a>: asynchronous request tracking by token.</li>
-<li>API: <a class="el" href="#ga2b6bd4e110caa560464cc252a7dc787f" title="Registra una nueva solicitud en el buffer circular.">addRequest()</a>, <a class="el" href="#ga5e9b156cfc98d9c060bfd23770ed3590" title="Busca una solicitud pendiente por su token.">findRequestByToken()</a>, <a class="el" href="#ga46a07d73c79d4b8999372b819403da58" title="Comandos especiales utilizados durante la fase de descubrimiento de sensores.">DiscoveryOrder</a>, <a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5af" title="Clasificación del propósito de una solicitud Modbus.">RequestType</a>.</li>
+<li><a class="el" href="struct_modbus_request_info.html" title="Context of an in-flight Modbus request.">ModbusRequestInfo</a>: asynchronous request tracking by token.</li>
+<li>API: <a class="el" href="#ga2b6bd4e110caa560464cc252a7dc787f" title="Registers a new request in the circular buffer.">addRequest()</a>, <a class="el" href="#ga5e9b156cfc98d9c060bfd23770ed3590" title="Searches for a pending request by its token.">findRequestByToken()</a>, <a class="el" href="#ga46a07d73c79d4b8999372b819403da58" title="Special commands used during the sensor discovery phase.">DiscoveryOrder</a>, <a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5af" title="Classification of the purpose of a Modbus request.">RequestType</a>.</li>
 </ul>
 </li>
 <li>Main tasks<ul>
-<li><span class="tt"><a class="el" href="#gab0e674715eff7261b0ae3a35fe239be4" title="Tarea de un solo uso para el descubrimiento inicial de sensores.">initialDiscoveryTask</a></span>: sensor discovery.</li>
-<li><span class="tt"><a class="el" href="#gac0c8aeee251d675a0300a1e3be22e9fe" title="Tarea Gestor de Eventos.">EventManager</a></span>: translates events into Modbus transactions and registers tokens.</li>
-<li><span class="tt"><a class="el" href="#gafe37cc62bf5e1b7be5d4b906edac7444" title="Tarea principal del Planificador (Scheduler).">DataRequestScheduler</a></span>: generates sampling events according to scheduleList.</li>
-<li>Callbacks: <span class="tt"><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback ejecutado al recibir datos Modbus válidos.">handleData</a></span> and <span class="tt"><a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback ejecutado al ocurrir un error Modbus.">handleError</a></span>.</li>
+<li><span class="tt"><a class="el" href="#gab0e674715eff7261b0ae3a35fe239be4" title="One-shot task for the initial discovery of sensors.">initialDiscoveryTask</a></span>: sensor discovery.</li>
+<li><span class="tt"><a class="el" href="#gac0c8aeee251d675a0300a1e3be22e9fe" title="Event Manager task.">EventManager</a></span>: translates events into Modbus transactions and registers tokens.</li>
+<li><span class="tt"><a class="el" href="#gafe37cc62bf5e1b7be5d4b906edac7444" title="Main task of the Scheduler.">DataRequestScheduler</a></span>: generates sampling events according to scheduleList.</li>
+<li>Callbacks: <span class="tt"><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback executed upon receiving valid Modbus data.">handleData</a></span> and <span class="tt"><a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback executed when a Modbus error occurs.">handleError</a></span>.</li>
 </ul>
 </li>
 </ul>
 <h1 class="doxsection"><a class="anchor" id="group_modbus_api"></a>
 Main API</h1>
 <ul>
-<li>Data/Config: <span class="tt"><a class="el" href="struct_modbus_sensor_param.html" title="Define los parámetros de configuración de un sensor individual.">ModbusSensorParam</a></span>, <span class="tt"><a class="el" href="struct_modbus_slave_param.html" title="Vector global que almacena la configuración y estado de todos los esclavos Modbus descubiertos.">ModbusSlaveParam</a></span>, <span class="tt"><a class="el" href="struct_sensor_schedule.html" title="Elemento de planificación para el muestreo de sensores.">SensorSchedule</a></span>.</li>
-<li>Transport: <span class="tt"><a class="el" href="struct_response_format.html" title="Estructura intermedia para pasar datos desde el callback Modbus a las tareas.">ResponseFormat</a></span>.</li>
-<li>Requests: <span class="tt"><a class="el" href="struct_modbus_request_info.html" title="Contexto de una solicitud Modbus en vuelo.">ModbusRequestInfo</a></span>, <span class="tt"><a class="el" href="#ga46a07d73c79d4b8999372b819403da58" title="Comandos especiales utilizados durante la fase de descubrimiento de sensores.">DiscoveryOrder</a></span>, <span class="tt"><a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5af" title="Clasificación del propósito de una solicitud Modbus.">RequestType</a></span>, <span class="tt"><a class="el" href="#ga2b6bd4e110caa560464cc252a7dc787f" title="Registra una nueva solicitud en el buffer circular.">addRequest()</a></span>, <span class="tt"><a class="el" href="#ga5e9b156cfc98d9c060bfd23770ed3590" title="Busca una solicitud pendiente por su token.">findRequestByToken()</a></span>.</li>
-<li>Callbacks/Tasks: <span class="tt"><a class="el" href="#gab0e674715eff7261b0ae3a35fe239be4" title="Tarea de un solo uso para el descubrimiento inicial de sensores.">initialDiscoveryTask</a></span>, <span class="tt"><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback ejecutado al recibir datos Modbus válidos.">handleData</a></span>, <span class="tt"><a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback ejecutado al ocurrir un error Modbus.">handleError</a></span>, <span class="tt"><a class="el" href="#gac0c8aeee251d675a0300a1e3be22e9fe" title="Tarea Gestor de Eventos.">EventManager</a></span>, <span class="tt"><a class="el" href="#gafe37cc62bf5e1b7be5d4b906edac7444" title="Tarea principal del Planificador (Scheduler).">DataRequestScheduler</a></span>.</li>
+<li>Data/Config: <span class="tt"><a class="el" href="struct_modbus_sensor_param.html" title="Defines the configuration parameters for an individual sensor.">ModbusSensorParam</a></span>, <span class="tt"><a class="el" href="struct_modbus_slave_param.html" title="Global vector that stores the configuration and state of all discovered Modbus slaves.">ModbusSlaveParam</a></span>, <span class="tt"><a class="el" href="struct_sensor_schedule.html" title="Planning element for sensor sampling.">SensorSchedule</a></span>.</li>
+<li>Transport: <span class="tt"><a class="el" href="struct_response_format.html" title="Intermediate structure to pass data from the Modbus callback to tasks.">ResponseFormat</a></span>.</li>
+<li>Requests: <span class="tt"><a class="el" href="struct_modbus_request_info.html" title="Context of an in-flight Modbus request.">ModbusRequestInfo</a></span>, <span class="tt"><a class="el" href="#ga46a07d73c79d4b8999372b819403da58" title="Special commands used during the sensor discovery phase.">DiscoveryOrder</a></span>, <span class="tt"><a class="el" href="#gae10b07f2d0feb103db7fe4cfd192e5af" title="Classification of the purpose of a Modbus request.">RequestType</a></span>, <span class="tt"><a class="el" href="#ga2b6bd4e110caa560464cc252a7dc787f" title="Registers a new request in the circular buffer.">addRequest()</a></span>, <span class="tt"><a class="el" href="#ga5e9b156cfc98d9c060bfd23770ed3590" title="Searches for a pending request by its token.">findRequestByToken()</a></span>.</li>
+<li>Callbacks/Tasks: <span class="tt"><a class="el" href="#gab0e674715eff7261b0ae3a35fe239be4" title="One-shot task for the initial discovery of sensors.">initialDiscoveryTask</a></span>, <span class="tt"><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback executed upon receiving valid Modbus data.">handleData</a></span>, <span class="tt"><a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback executed when a Modbus error occurs.">handleError</a></span>, <span class="tt"><a class="el" href="#gac0c8aeee251d675a0300a1e3be22e9fe" title="Event Manager task.">EventManager</a></span>, <span class="tt"><a class="el" href="#gafe37cc62bf5e1b7be5d4b906edac7444" title="Main task of the Scheduler.">DataRequestScheduler</a></span>.</li>
 </ul>
 <h1 class="doxsection"><a class="anchor" id="group_modbus_usage"></a>
 Usage</h1>
 <p>Flow summary:</p>
 <p>1) Modbus startup</p><ul>
 <li>Initializes UART RS485 and ModbusClientRTU (timeout/begin).</li>
-<li>Registers callbacks: <a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback ejecutado al recibir datos Modbus válidos.">handleData()</a>, <a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback ejecutado al ocurrir un error Modbus.">handleError()</a>.</li>
+<li>Registers callbacks: <a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback executed upon receiving valid Modbus data.">handleData()</a>, <a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback executed when a Modbus error occurs.">handleError()</a>.</li>
 <li>Creates tasks: EventManager and DataRequestScheduler.</li>
 <li>Launches initialDiscoveryTask with devicesToQuery.</li>
 </ul>
 <p>2) Discovery</p><ul>
 <li>initialDiscoveryTask publishes order=DISCOVERY_READ_SENSOR_PARAM.</li>
 <li>EventManager sends read request (addr=0, qty=8) and registers token.</li>
-<li><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback ejecutado al recibir datos Modbus válidos.">handleData()</a> parses and updates slaveList with <a class="el" href="#gacd852b44946c142cee5128d699ead65a" title="Parsea la respuesta de descubrimiento y actualiza la lista de esclavos.">parseAndStoreDiscoveryResponse()</a>.</li>
-<li><a class="el" href="#gaec0c4943af093ad42d2d099ceeadb98c" title="Inicializa o actualiza la lista de planificación (Scheduler).">initScheduler()</a> calculates scheduleList.</li>
+<li><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback executed upon receiving valid Modbus data.">handleData()</a> parses and updates slaveList with <a class="el" href="#gacd852b44946c142cee5128d699ead65a" title="Parses the discovery response and updates the slave list.">parseAndStoreDiscoveryResponse()</a>.</li>
+<li><a class="el" href="#gaec0c4943af093ad42d2d099ceeadb98c" title="Initializes or updates the scheduling list (Scheduler).">initScheduler()</a> calculates scheduleList.</li>
 </ul>
 <p>3) Periodic sampling</p><ul>
 <li>DataRequestScheduler triggers REQUEST_SAMPLING according to nextSampleTime.</li>
-<li>EventManager queries <a class="el" href="#ga320e20ed89286bb200de38e3c0d74cde" title="Obtiene los parámetros de configuración de un sensor específico.">getSensorParams()</a> and sends read request with startAddress/numRegs.</li>
-<li><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback ejecutado al recibir datos Modbus válidos.">handleData()</a> delivers registers to the next subsystem.</li>
+<li>EventManager queries <a class="el" href="#ga320e20ed89286bb200de38e3c0d74cde" title="Gets the configuration parameters of a specific sensor.">getSensorParams()</a> and sends read request with startAddress/numRegs.</li>
+<li><a class="el" href="#gae13ecbdf143b216f696e59a9b7edb141" title="Callback executed upon receiving valid Modbus data.">handleData()</a> delivers registers to the next subsystem.</li>
 </ul>
 <p>4) Modbus errors</p><ul>
-<li><a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback ejecutado al ocurrir un error Modbus.">handleError()</a>: handles TIMEOUT, increases consecutiveFails, removes inactive slaves and recalculates scheduler.</li>
+<li><a class="el" href="#ga944f73ca5a3437229e84a3317d2a1634" title="Callback executed when a Modbus error occurs.">handleError()</a>: handles TIMEOUT, increases consecutiveFails, removes inactive slaves and recalculates scheduler.</li>
 <li>Tokens are invalidated after processing.</li>
 </ul>
 <p>Warnings and best practices:</p><ul>
 <li>Ensure consistent layout of 8 parameter registers for discovery.</li>
 <li>Respect offset 3 for register data in Modbus RTU responses.</li>
-<li>Protect scheduleList access with <span class="tt"><a class="el" href="main_8cpp.html#abadaff9f6b3275804b5985d7acb91a6d" title="Mutex para proteger el acceso concurrente a scheduleList;.">schedulerMutex</a></span>.</li>
+<li>Protect scheduleList access with <span class="tt"><a class="el" href="main_8cpp.html#abadaff9f6b3275804b5985d7acb91a6d" title="Mutex to protect concurrent access to scheduleList;.">schedulerMutex</a></span>.</li>
 <li>Review <span class="tt">MAX_*</span> limits to avoid overflow in queues and tokens. </li>
 </ul>
 <a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
@@ -258,7 +258,7 @@ Usage</h1>
 
 <p>&lt; Utilidades de memoria (memcpy). </p>
 <p>&lt; Necesario para definiciones de tipos enteros de tamaño fijo (uint8_t, etc). &lt; Estructura de datos para mapeo de sensores. &lt; Utilizado para la generación de timestamps UNIX.</p>
-<p>Pin de recepción UART para RS485. </p>
+<p>UART reception pin for RS485. </p>
 
 </div>
 </div>
@@ -275,13 +275,13 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Comandos especiales utilizados durante la fase de descubrimiento de sensores. </p>
+<p>Special commands used during the sensor discovery phase. </p>
 <table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="ga46a07d73c79d4b8999372b819403da58a1e1800af67b81d987bb00060533d5915" name="ga46a07d73c79d4b8999372b819403da58a1e1800af67b81d987bb00060533d5915"></a>DISCOVERY_GET_COUNT&#160;</td><td class="fielddoc"><p>Solicitar conteo de elementos. </p>
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="ga46a07d73c79d4b8999372b819403da58a1e1800af67b81d987bb00060533d5915" name="ga46a07d73c79d4b8999372b819403da58a1e1800af67b81d987bb00060533d5915"></a>DISCOVERY_GET_COUNT&#160;</td><td class="fielddoc"><p>Request item count. </p>
 </td></tr>
-<tr><td class="fieldname"><a id="ga46a07d73c79d4b8999372b819403da58a7a182e1d066bf8f45714fb1d7f0549e1" name="ga46a07d73c79d4b8999372b819403da58a7a182e1d066bf8f45714fb1d7f0549e1"></a>DISCOVERY_GET_DATA_OFFSET&#160;</td><td class="fielddoc"><p>Offset para obtener datos específicos. </p>
+<tr><td class="fieldname"><a id="ga46a07d73c79d4b8999372b819403da58a7a182e1d066bf8f45714fb1d7f0549e1" name="ga46a07d73c79d4b8999372b819403da58a7a182e1d066bf8f45714fb1d7f0549e1"></a>DISCOVERY_GET_DATA_OFFSET&#160;</td><td class="fielddoc"><p>Offset to get specific data. </p>
 </td></tr>
-<tr><td class="fieldname"><a id="ga46a07d73c79d4b8999372b819403da58aea7e33cbb3a664bdb9a7e871353aa21e" name="ga46a07d73c79d4b8999372b819403da58aea7e33cbb3a664bdb9a7e871353aa21e"></a>DISCOVERY_READ_SENSOR_PARAM&#160;</td><td class="fielddoc"><p>Orden para leer parámetros del sensor (registros 0..7). </p>
+<tr><td class="fieldname"><a id="ga46a07d73c79d4b8999372b819403da58aea7e33cbb3a664bdb9a7e871353aa21e" name="ga46a07d73c79d4b8999372b819403da58aea7e33cbb3a664bdb9a7e871353aa21e"></a>DISCOVERY_READ_SENSOR_PARAM&#160;</td><td class="fielddoc"><p>Command to read sensor parameters (registers 0..7). </p>
 </td></tr>
 </table>
 
@@ -299,13 +299,13 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Clasificación del propósito de una solicitud Modbus. </p>
+<p>Classification of the purpose of a Modbus request. </p>
 <table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="gae10b07f2d0feb103db7fe4cfd192e5afacc059c796c5ae2d0205ad730768999b7" name="gae10b07f2d0feb103db7fe4cfd192e5afacc059c796c5ae2d0205ad730768999b7"></a>REQUEST_UNKNOWN&#160;</td><td class="fielddoc"><p>Tipo de solicitud no identificado. </p>
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="gae10b07f2d0feb103db7fe4cfd192e5afacc059c796c5ae2d0205ad730768999b7" name="gae10b07f2d0feb103db7fe4cfd192e5afacc059c796c5ae2d0205ad730768999b7"></a>REQUEST_UNKNOWN&#160;</td><td class="fielddoc"><p>Unidentified request type. </p>
 </td></tr>
-<tr><td class="fieldname"><a id="gae10b07f2d0feb103db7fe4cfd192e5afa3232d13dce2d61800581b3b1c0b1611d" name="gae10b07f2d0feb103db7fe4cfd192e5afa3232d13dce2d61800581b3b1c0b1611d"></a>REQUEST_DISCOVERY&#160;</td><td class="fielddoc"><p>Solicitud relacionada con el descubrimiento de hardware. </p>
+<tr><td class="fieldname"><a id="gae10b07f2d0feb103db7fe4cfd192e5afa3232d13dce2d61800581b3b1c0b1611d" name="gae10b07f2d0feb103db7fe4cfd192e5afa3232d13dce2d61800581b3b1c0b1611d"></a>REQUEST_DISCOVERY&#160;</td><td class="fielddoc"><p>Request related to hardware discovery. </p>
 </td></tr>
-<tr><td class="fieldname"><a id="gae10b07f2d0feb103db7fe4cfd192e5afa5ade4fdadde8b1ec2bc10668653efa7b" name="gae10b07f2d0feb103db7fe4cfd192e5afa5ade4fdadde8b1ec2bc10668653efa7b"></a>REQUEST_SAMPLING&#160;</td><td class="fielddoc"><p>Solicitud de lectura periódica de datos. </p>
+<tr><td class="fieldname"><a id="gae10b07f2d0feb103db7fe4cfd192e5afa5ade4fdadde8b1ec2bc10668653efa7b" name="gae10b07f2d0feb103db7fe4cfd192e5afa5ade4fdadde8b1ec2bc10668653efa7b"></a>REQUEST_SAMPLING&#160;</td><td class="fielddoc"><p>Request for periodic data reading. </p>
 </td></tr>
 </table>
 
@@ -346,14 +346,14 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Registra una nueva solicitud en el buffer circular. </p>
+<p>Registers a new request in the circular buffer. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">token</td><td>Identificador único. </td></tr>
-    <tr><td class="paramname">slaveId</td><td>ID del esclavo. </td></tr>
-    <tr><td class="paramname">sensorId</td><td>ID del sensor. </td></tr>
-    <tr><td class="paramname">functionCode</td><td>Función Modbus. </td></tr>
-    <tr><td class="paramname">type</td><td>Tipo de solicitud. </td></tr>
+    <tr><td class="paramname">token</td><td>Unique identifier. </td></tr>
+    <tr><td class="paramname">slaveId</td><td>Slave ID. </td></tr>
+    <tr><td class="paramname">sensorId</td><td>Sensor ID. </td></tr>
+    <tr><td class="paramname">functionCode</td><td>Modbus function. </td></tr>
+    <tr><td class="paramname">type</td><td>Request type. </td></tr>
   </table>
   </dd>
 </dl>
@@ -375,8 +375,8 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Tarea principal del Planificador (Scheduler). </p>
-<p>Revisa periódicamente qué sensores deben ser muestreados y genera eventos para el EventManager. </p>
+<p>Main task of the Scheduler. </p>
+<p>Periodically checks which sensors should be sampled and generates events for the EventManager. </p>
 
 </div>
 </div>
@@ -395,14 +395,14 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Inicia el proceso de descubrimiento para un dispositivo específico. </p>
+<p>Starts the discovery process for a specific device. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">deviceId</td><td>ID Modbus del dispositivo a consultar. </td></tr>
+    <tr><td class="paramname">deviceId</td><td>Modbus ID of the device to query. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true si el evento se encoló correctamente, false en caso contrario. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if the event was queued correctly, false otherwise. </dd></dl>
 
 </div>
 </div>
@@ -421,8 +421,8 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Tarea Gestor de Eventos. </p>
-<p>Centraliza las peticiones de las colas (Scheduler y Peripheral) y las convierte en transacciones Modbus reales. </p>
+<p>Event Manager task. </p>
+<p>Centralizes requests from the queues (Scheduler and Peripheral) and converts them into actual Modbus transactions. </p>
 
 </div>
 </div>
@@ -441,14 +441,14 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Busca una solicitud pendiente por su token. </p>
+<p>Searches for a pending request by its token. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">token</td><td>Token a buscar. </td></tr>
+    <tr><td class="paramname">token</td><td>Token to search for. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>Puntero a la estructura <a class="el" href="struct_modbus_request_info.html" title="Contexto de una solicitud Modbus en vuelo.">ModbusRequestInfo</a> o nullptr si no existe. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>Pointer to the <a class="el" href="struct_modbus_request_info.html" title="Context of an in-flight Modbus request.">ModbusRequestInfo</a> structure or nullptr if it does not exist. </dd></dl>
 
 </div>
 </div>
@@ -471,8 +471,8 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Calcula el número de registros por canal para un sensor. </p>
-<dl class="section return"><dt>Returns</dt><dd>Número de registros o 0 si no se encuentra el sensor. </dd></dl>
+<p>Calculates the number of registers per channel for a sensor. </p>
+<dl class="section return"><dt>Returns</dt><dd>Number of registers or 0 if the sensor is not found. </dd></dl>
 
 </div>
 </div>
@@ -505,17 +505,17 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Obtiene los parámetros de configuración de un sensor específico. </p>
+<p>Gets the configuration parameters of a specific sensor. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">slaveId</td><td>ID del esclavo. </td></tr>
-    <tr><td class="paramname">sensorID</td><td>ID del sensor. </td></tr>
-    <tr><td class="paramname">startAddr</td><td>Referencia para devolver la dirección de inicio. </td></tr>
-    <tr><td class="paramname">numRegs</td><td>Referencia para devolver el número de registros. </td></tr>
+    <tr><td class="paramname">slaveId</td><td>Slave ID. </td></tr>
+    <tr><td class="paramname">sensorID</td><td>Sensor ID. </td></tr>
+    <tr><td class="paramname">startAddr</td><td>Reference to return the start address. </td></tr>
+    <tr><td class="paramname">numRegs</td><td>Reference to return the number of registers. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true si se encontró el sensor, false en caso contrario. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if the sensor was found, false otherwise. </dd></dl>
 
 </div>
 </div>
@@ -538,11 +538,11 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Callback ejecutado al recibir datos Modbus válidos. </p>
+<p>Callback executed upon receiving valid Modbus data. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">response</td><td>Objeto con la respuesta cruda. </td></tr>
-    <tr><td class="paramname">token</td><td>Token de la solicitud original. </td></tr>
+    <tr><td class="paramname">response</td><td>Object with the raw response. </td></tr>
+    <tr><td class="paramname">token</td><td>Token of the original request. </td></tr>
   </table>
   </dd>
 </dl>
@@ -568,11 +568,11 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Callback ejecutado al ocurrir un error Modbus. </p>
-<p>Gestiona la lógica de reintentos y eliminación de esclavos inactivos (Timeout). </p><dl class="params"><dt>Parameters</dt><dd>
+<p>Callback executed when a Modbus error occurs. </p>
+<p>Manages retry logic and removal of inactive slaves (Timeout). </p><dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">error</td><td>Código de error. </td></tr>
-    <tr><td class="paramname">token</td><td>Token de la solicitud fallida. </td></tr>
+    <tr><td class="paramname">error</td><td>Error code. </td></tr>
+    <tr><td class="paramname">token</td><td>Token of the failed request. </td></tr>
   </table>
   </dd>
 </dl>
@@ -594,8 +594,8 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Tarea de un solo uso para el descubrimiento inicial de sensores. </p>
-<p>Itera sobre <span class="tt"><a class="el" href="main_8cpp.html#a5e78a612252d23106755e7351cb84b0d" title="Lista predefinida de IDs Modbus a escanear al inicio.">dispositivosAConsultar</a></span>, lanza el descubrimiento y luego se autoelimina. </p>
+<p>One-shot task for the initial discovery of sensors. </p>
+<p>Iterates over <span class="tt"><a class="el" href="main_8cpp.html#a5e78a612252d23106755e7351cb84b0d" title="Predefined list of Modbus IDs to scan at startup.">dispositivosAConsultar</a></span>, launches discovery, and then self-deletes. </p>
 
 </div>
 </div>
@@ -614,8 +614,8 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Inicializa o actualiza la lista de planificación (Scheduler). </p>
-<p>Recorre <span class="tt">slaveList</span>, calcula los intervalos efectivos basados en canales y registros, y puebla <span class="tt"><a class="el" href="main_8cpp.html#a3008cc0b8c65d61cdad0c1e10f3c9293" title="Lista maestra de planificación.">scheduleList</a></span>. Es thread-safe mediante <span class="tt"><a class="el" href="main_8cpp.html#abadaff9f6b3275804b5985d7acb91a6d" title="Mutex para proteger el acceso concurrente a scheduleList;.">schedulerMutex</a></span>. </p>
+<p>Initializes or updates the scheduling list (Scheduler). </p>
+<p>Iterates through <span class="tt">slaveList</span>, calculates effective intervals based on channels and registers, and populates <span class="tt"><a class="el" href="main_8cpp.html#a3008cc0b8c65d61cdad0c1e10f3c9293" title="Master scheduling list.">scheduleList</a></span>. It is thread-safe using <span class="tt"><a class="el" href="main_8cpp.html#abadaff9f6b3275804b5985d7acb91a6d" title="Mutex to protect concurrent access to scheduleList;.">schedulerMutex</a></span>. </p>
 
 </div>
 </div>
@@ -638,11 +638,11 @@ Usage</h1>
       </table>
 </div><div class="memdoc">
 
-<p>Parsea la respuesta de descubrimiento y actualiza la lista de esclavos. </p>
-<p>Decodifica los 8 registros de parámetros y crea o actualiza la entrada en <span class="tt">slaveList</span>. </p><dl class="params"><dt>Parameters</dt><dd>
+<p>Parses the discovery response and updates the slave list. </p>
+<p>Decodes the 8 parameter registers and creates or updates the entry in <span class="tt">slaveList</span>. </p><dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">response</td><td>Datos crudos recibidos. </td></tr>
-    <tr><td class="paramname">slaveId</td><td>ID del esclavo que respondió. </td></tr>
+    <tr><td class="paramname">response</td><td>Raw data received. </td></tr>
+    <tr><td class="paramname">slaveId</td><td>ID of the slave that responded. </td></tr>
   </table>
   </dd>
 </dl>

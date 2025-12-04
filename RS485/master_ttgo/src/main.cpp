@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
- * @brief Firmware Maestro Modbus RTU sobre LoRaWAN (ESP32/TTGO).
- * @details Este sistema gestiona la comunicación RS485 con múltiples esclavos, 
- * planifica lecturas periódicas, formatea los datos y los transmite vía LoRaWAN.
+ * @brief Modbus RTU Master Firmware over LoRaWAN (ESP32/TTGO).
+ * @details This system manages RS485 communication with multiple slaves, 
+ * schedules periodic readings, formats the data, and transmits it via LoRaWAN.
  * @date 2025-12-02
  */
 
@@ -19,106 +19,106 @@
 #include "ModbusClientRTU.h"
 
 // =================================================================================================
-// Configuración Modbus RTU
+// Modbus RTU Configuration
 // =================================================================================================
 
 /**
  * @def RX_PIN
- * @brief Pin de recepción UART para RS485.
+ * @brief UART reception pin for RS485.
  * @ingroup group_modbus_discovery
  */
 #define RX_PIN 13
 /**
  * @def TX_PIN
- * @brief Pin de transmisión UART para RS485.
+ * @brief UART transmission pin for RS485.
  * @ingroup group_modbus_discovery
  */
 #define TX_PIN 12
 
 /**
- * @brief Instancia global del cliente Modbus RTU.
+ * @brief Global instance of the Modbus RTU client.
  * @ingroup group_modbus_discovery
  */
 ModbusClientRTU MB;
 
 /**
  * @struct ModbusSensorParam
- * @brief Define los parámetros de configuración de un sensor individual.
- * @details Esta estructura almacena cómo leer e interpretar los datos de un sensor específico.
+ * @brief Defines the configuration parameters for an individual sensor.
+ * @details This structure stores how to read and interpret data from a specific sensor.
  * @ingroup group_modbus_discovery
  */
 typedef struct {
-    uint8_t sensorID;           ///< Identificador único del sensor.
-    uint8_t numberOfChannels;   ///< Número de canales de datos del sensor.
-    uint16_t startAddress;      ///< Dirección de registro inicial Modbus.
-    uint16_t maxRegisters;      ///< Cantidad total de registros a leer.
-    uint16_t samplingInterval;  ///< Intervalo de muestreo base en milisegundos.
-    uint8_t dataType;           ///< Tipo de dato: 1=uint8, 2=uint16, 3=compressed bytes, 4=float16.
-    uint8_t scale;              ///< Factor de escala decimal (10^scale).
-    uint8_t compressedBytes;    ///< Número de bytes por valor si se usa compresión (dataType=3).
+    uint8_t sensorID;           ///< Unique sensor identifier.
+    uint8_t numberOfChannels;   ///< Number of data channels for the sensor.
+    uint16_t startAddress;      ///< Initial Modbus register address.
+    uint16_t maxRegisters;      ///< Total number of registers to read.
+    uint16_t samplingInterval;  ///< Base sampling interval in milliseconds.
+    uint8_t dataType;           ///< Data type: 1=uint8, 2=uint16, 3=compressed bytes, 4=float16.
+    uint8_t scale;              ///< Decimal scale factor (10^scale).
+    uint8_t compressedBytes;    ///< Number of bytes per value if compression is used (dataType=3).
 } ModbusSensorParam;
 
 /**
  * @struct ModbusSlaveParam
- * @brief Representa un dispositivo esclavo físico en el bus RS485.
+ * @brief Represents a physical slave device on the RS485 bus.
  * @ingroup group_modbus_discovery
  */
 struct ModbusSlaveParam {
-    uint8_t slaveID;                        ///< Dirección Modbus del esclavo (1-247).
-    std::vector<ModbusSensorParam> sensors; ///< Vector con los sensores asociados a este esclavo.
-    uint8_t consecutiveFails;               ///< Contador de fallos consecutivos para gestión de errores.
+    uint8_t slaveID;                        ///< Modbus address of the slave (1-247).
+    std::vector<ModbusSensorParam> sensors; ///< Vector with the sensors associated with this slave.
+    uint8_t consecutiveFails;               ///< Counter of consecutive failures for error handling.
 };
 
-///< Vector global que almacena la configuración y estado de todos los esclavos Modbus descubiertos.
+///< Global vector that stores the configuration and state of all discovered Modbus slaves.
 std::vector<ModbusSlaveParam> slaveList;
 
 /**
  * @enum DiscoveryOrder
- * @brief Comandos especiales utilizados durante la fase de descubrimiento de sensores.
+ * @brief Special commands used during the sensor discovery phase.
  * @ingroup group_modbus_discovery
  */
 enum DiscoveryOrder {
-    DISCOVERY_GET_COUNT = 1,          ///< Solicitar conteo de elementos.
-    DISCOVERY_GET_DATA_OFFSET = 255,  ///< Offset para obtener datos específicos.
-    DISCOVERY_READ_SENSOR_PARAM = 8   ///< Orden para leer parámetros del sensor (registros 0..7).
+    DISCOVERY_GET_COUNT = 1,          ///< Request item count.
+    DISCOVERY_GET_DATA_OFFSET = 255,  ///< Offset to get specific data.
+    DISCOVERY_READ_SENSOR_PARAM = 8   ///< Command to read sensor parameters (registers 0..7).
 };
 
 /**
  * @enum RequestType
- * @brief Clasificación del propósito de una solicitud Modbus.
+ * @brief Classification of the purpose of a Modbus request.
  * @ingroup group_modbus_discovery
  */
 enum RequestType {
-    REQUEST_UNKNOWN,    ///< Tipo de solicitud no identificado.
-    REQUEST_DISCOVERY,  ///< Solicitud relacionada con el descubrimiento de hardware.
-    REQUEST_SAMPLING    ///< Solicitud de lectura periódica de datos.
+    REQUEST_UNKNOWN,    ///< Unidentified request type.
+    REQUEST_DISCOVERY,  ///< Request related to hardware discovery.
+    REQUEST_SAMPLING    ///< Request for periodic data reading.
 };
 
 /**
  * @struct ModbusRequestInfo
- * @brief Contexto de una solicitud Modbus en vuelo.
- * @details Permite rastrear el origen y propósito de una petición asíncrona.
+ * @brief Context of an in-flight Modbus request.
+ * @details Allows tracking the origin and purpose of an asynchronous request.
  * @ingroup group_modbus_discovery
  */
 struct ModbusRequestInfo {
-    uint32_t token;           ///< Token único de la transacción.
-    uint8_t slaveId;          ///< ID del esclavo destino.
-    uint8_t sensorId;         ///< ID del sensor objetivo.
-    uint8_t functionCode;     ///< Código de función Modbus utilizado.
-    RequestType type;         ///< Propósito de la solicitud (Descubrimiento o Muestreo).
+    uint32_t token;           ///< Unique transaction token.
+    uint8_t slaveId;          ///< ID of the target slave.
+    uint8_t sensorId;         ///< ID of the target sensor.
+    uint8_t functionCode;     ///< Modbus function code used.
+    RequestType type;         ///< Purpose of the request (Discovery or Sampling).
 };
 
-constexpr size_t MAX_REQUESTS = 16;             ///< Tamaño máximo del buffer de solicitudes pendientes.
-ModbusRequestInfo requestBuffer[MAX_REQUESTS];  ///< Buffer circular de solicitudes.
-size_t requestHead = 0;                         ///< Índice de escritura del buffer circular.
+constexpr size_t MAX_REQUESTS = 16;             ///< Maximum size of the pending requests buffer.
+ModbusRequestInfo requestBuffer[MAX_REQUESTS];  ///< Circular buffer for requests.
+size_t requestHead = 0;                         ///< Write index of the circular buffer.
 
 /**
- * @brief Registra una nueva solicitud en el buffer circular.
- * @param token Identificador único.
- * @param slaveId ID del esclavo.
- * @param sensorId ID del sensor.
- * @param functionCode Función Modbus.
- * @param type Tipo de solicitud.
+ * @brief Registers a new request in the circular buffer.
+ * @param token Unique identifier.
+ * @param slaveId Slave ID.
+ * @param sensorId Sensor ID.
+ * @param functionCode Modbus function.
+ * @param type Request type.
  * @ingroup group_modbus_discovery
  */
 void addRequest(uint32_t token, uint8_t slaveId, uint8_t sensorId, uint8_t functionCode, RequestType type) {
@@ -127,9 +127,9 @@ void addRequest(uint32_t token, uint8_t slaveId, uint8_t sensorId, uint8_t funct
 }
 
 /**
- * @brief Busca una solicitud pendiente por su token.
- * @param token Token a buscar.
- * @return Puntero a la estructura ModbusRequestInfo o nullptr si no existe.
+ * @brief Searches for a pending request by its token.
+ * @param token Token to search for.
+ * @return Pointer to the ModbusRequestInfo structure or nullptr if it does not exist.
  * @ingroup group_modbus_discovery
  */
 ModbusRequestInfo* findRequestByToken(uint32_t token) {
@@ -142,67 +142,67 @@ ModbusRequestInfo* findRequestByToken(uint32_t token) {
 }
 
 // =======================================================================
-// CALLBACK para manejar respuestas de datos exitosas
+// CALLBACK to handle successful data responses
 // =======================================================================
 
 /**
  * @def MAX_MODBUS_RESPONSE_LENGTH
- * @brief Longitud máxima esperada para una respuesta Modbus.
+ * @brief Maximum expected length for a Modbus response.
  * @ingroup group_modbus_discovery
  */
-#define MAX_MODBUS_RESPONSE_LENGTH 256 ///< Longitud máxima esperada para una respuesta Modbus.
+#define MAX_MODBUS_RESPONSE_LENGTH 256 ///< Maximum expected length for a Modbus response.
 
 /**
  * @struct ResponseFormat
- * @brief Estructura intermedia para pasar datos desde el callback Modbus a las tareas.
+ * @brief Intermediate structure to pass data from the Modbus callback to tasks.
  * @ingroup group_modbus_discovery
  * @ingroup group_data_format
  */
 typedef struct {
-    uint8_t data[MAX_MODBUS_RESPONSE_LENGTH]; ///< Buffer de datos crudos.
-    size_t length;      ///< Número de bytes válidos en el buffer.
-    uint8_t deviceId;   ///< ID del dispositivo que respondió (Opcional).
-    uint32_t order;     ///< Token de orden para correlación (Opcional).
+    uint8_t data[MAX_MODBUS_RESPONSE_LENGTH]; ///< Raw data buffer.
+    size_t length;      ///< Number of valid bytes in the buffer.
+    uint8_t deviceId;   ///< ID of the responding device (Optional).
+    uint32_t order;     ///< Order token for correlation (Optional).
 } ResponseFormat;
 
 /**
- * @brief Cola de respuestas Modbus recibidas.
+ * @brief Queue for received Modbus responses.
  * @ingroup group_modbus_discovery
  */
 QueueHandle_t queueRespuestas;
 /**
- * @brief Colas de eventos hacia el EventManager (periféricos y scheduler).
+ * @brief Event queues to the EventManager (peripherals and scheduler).
  * @ingroup group_modbus_discovery
  */
 QueueHandle_t queueEventos_Peripheral;
 QueueHandle_t queueEventos_Scheduler;
 
-QueueHandle_t queueFragmentos;          ///< Cola para mensajes binarios LoRa.
-SemaphoreHandle_t semaforoEnvioCompleto; ///< Semáforo para sincronizar el fin de un ciclo de envío.
+QueueHandle_t queueFragmentos;          ///< Queue for binary LoRa messages.
+SemaphoreHandle_t semaforoEnvioCompleto; ///< Semaphore to synchronize the end of a sending cycle.
 
 /**
  * @struct SensorSchedule
- * @brief Elemento de planificación para el muestreo de sensores.
+ * @brief Planning element for sensor sampling.
  * @ingroup group_modbus_discovery
  */
 struct SensorSchedule {
-    uint8_t slaveID;           ///< ID del esclavo.
-    uint8_t sensorID;          ///< ID del sensor.
-    uint16_t samplingInterval; ///< Intervalo de muestreo calculado en ms.
-    uint32_t nextSampleTime;   ///< Marca de tiempo (millis) para la próxima ejecución.
+    uint8_t slaveID;           ///< Slave ID.
+    uint8_t sensorID;          ///< Sensor ID.
+    uint16_t samplingInterval; ///< Calculated sampling interval in ms.
+    uint32_t nextSampleTime;   ///< Timestamp (millis) for the next execution.
 };
 
-std::vector<SensorSchedule> scheduleList; ///< Lista maestra de planificación.
-SemaphoreHandle_t schedulerMutex;         ///< Mutex para proteger el acceso concurrente a scheduleList;
+std::vector<SensorSchedule> scheduleList; ///< Master scheduling list.
+SemaphoreHandle_t schedulerMutex;         ///< Mutex to protect concurrent access to scheduleList;
 
 /**
- * @brief Inicializa o actualiza la lista de planificación (Scheduler).
- * @details Recorre `slaveList`, calcula los intervalos efectivos basados en canales y registros,
- * y puebla `scheduleList`. Es thread-safe mediante `schedulerMutex`.
+ * @brief Initializes or updates the scheduling list (Scheduler).
+ * @details Iterates through `slaveList`, calculates effective intervals based on channels and registers,
+ * and populates `scheduleList`. It is thread-safe using `schedulerMutex`.
  * @ingroup group_modbus_discovery
  */
 void initScheduler() {
-    // Tomar el control exclusivo de las listas
+    // Take exclusive control of the lists
     if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
         scheduleList.clear();
         for (const auto& slave : slaveList) {
@@ -236,9 +236,9 @@ void initScheduler() {
 }
 
 /**
- * @brief Callback ejecutado al recibir datos Modbus válidos.
- * @param response Objeto con la respuesta cruda.
- * @param token Token de la solicitud original.
+ * @brief Callback executed upon receiving valid Modbus data.
+ * @param response Object with the raw response.
+ * @param token Token of the original request.
  * @ingroup group_modbus_discovery
  */
 void handleData(ModbusMessage response, uint32_t token) {
@@ -259,10 +259,10 @@ void handleData(ModbusMessage response, uint32_t token) {
 }
 
 /**
- * @brief Callback ejecutado al ocurrir un error Modbus.
- * @details Gestiona la lógica de reintentos y eliminación de esclavos inactivos (Timeout).
- * @param error Código de error.
- * @param token Token de la solicitud fallida.
+ * @brief Callback executed when a Modbus error occurs.
+ * @details Manages retry logic and removal of inactive slaves (Timeout).
+ * @param error Error code.
+ * @param token Token of the failed request.
  * @ingroup group_modbus_discovery
  */
 void handleError(Error error, uint32_t token) {
@@ -315,22 +315,22 @@ void handleError(Error error, uint32_t token) {
     }
 }
 
-std::vector<uint8_t> dispositivosAConsultar = {1, 2, 3}; ///< Lista predefinida de IDs Modbus a escanear al inicio.
+std::vector<uint8_t> dispositivosAConsultar = {1, 2, 3}; ///< Predefined list of Modbus IDs to scan at startup.
 
 /**
  * @struct EventManagerFormat
- * @brief Estructura de mensaje para comunicación interna de eventos.
+ * @brief Message structure for internal event communication.
  */
 struct EventManagerFormat {
-    uint8_t slaveId;    ///< ID del esclavo.
-    uint8_t sensorID;   ///< ID del sensor (0 para comandos generales).
-    uint16_t order;     ///< Tipo de orden o parámetro auxiliar.
+    uint8_t slaveId;    ///< Slave ID.
+    uint8_t sensorID;   ///< Sensor ID (0 for general commands).
+    uint16_t order;     ///< Order type or auxiliary parameter.
 };
 
 /**
- * @brief Inicia el proceso de descubrimiento para un dispositivo específico.
- * @param deviceId ID Modbus del dispositivo a consultar.
- * @return true si el evento se encoló correctamente, false en caso contrario.
+ * @brief Starts the discovery process for a specific device.
+ * @param deviceId Modbus ID of the device to query.
+ * @return true if the event was queued correctly, false otherwise.
  * @ingroup group_modbus_discovery
  */
 bool discoverDeviceSensors(uint8_t deviceId) {
@@ -346,8 +346,8 @@ bool discoverDeviceSensors(uint8_t deviceId) {
 }
 
 /**
- * @brief Tarea de un solo uso para el descubrimiento inicial de sensores.
- * @details Itera sobre `dispositivosAConsultar`, lanza el descubrimiento y luego se autoelimina.
+ * @brief One-shot task for the initial discovery of sensors.
+ * @details Iterates over `dispositivosAConsultar`, launches discovery, and then self-deletes.
  * @ingroup group_modbus_discovery
  */
 void initialDiscoveryTask(void *pvParameters) {
@@ -372,12 +372,12 @@ void initialDiscoveryTask(void *pvParameters) {
 
 
 /**
- * @brief Tarea principal del Planificador (Scheduler).
- * @details Revisa periódicamente qué sensores deben ser muestreados y genera eventos para el EventManager.
+ * @brief Main task of the Scheduler.
+ * @details Periodically checks which sensors should be sampled and generates events for the EventManager.
  * @ingroup group_modbus_discovery
  */
 void DataRequestScheduler(void *pvParameters) {
-    // La inicialización se hace desde la tarea de descubrimiento ahora
+    // Initialization is now done from the discovery task
     // initScheduler(); 
 
     while (true) {
@@ -427,12 +427,12 @@ void DataRequestScheduler(void *pvParameters) {
 }
 
 /**
- * @brief Obtiene los parámetros de configuración de un sensor específico.
- * @param slaveId ID del esclavo.
- * @param sensorID ID del sensor.
- * @param startAddr Referencia para devolver la dirección de inicio.
- * @param numRegs Referencia para devolver el número de registros.
- * @return true si se encontró el sensor, false en caso contrario.
+ * @brief Gets the configuration parameters of a specific sensor.
+ * @param slaveId Slave ID.
+ * @param sensorID Sensor ID.
+ * @param startAddr Reference to return the start address.
+ * @param numRegs Reference to return the number of registers.
+ * @return true if the sensor was found, false otherwise.
  * @ingroup group_modbus_discovery
  */
 bool getSensorParams(uint8_t slaveId, uint8_t sensorID, uint16_t& startAddr, uint16_t& numRegs) {
@@ -453,8 +453,8 @@ bool getSensorParams(uint8_t slaveId, uint8_t sensorID, uint16_t& startAddr, uin
 }
 
 /**
- * @brief Calcula el número de registros por canal para un sensor.
- * @return Número de registros o 0 si no se encuentra el sensor.
+ * @brief Calculates the number of registers per channel for a sensor.
+ * @return Number of registers or 0 if the sensor is not found.
  * @ingroup group_modbus_discovery
  */
 uint8_t getRegistersPerChannel(uint8_t slaveId, uint8_t sensorID) {
@@ -473,10 +473,10 @@ uint8_t getRegistersPerChannel(uint8_t slaveId, uint8_t sensorID) {
 }
 
 /**
- * @brief Parsea la respuesta de descubrimiento y actualiza la lista de esclavos.
- * @details Decodifica los 8 registros de parámetros y crea o actualiza la entrada en `slaveList`.
- * @param response Datos crudos recibidos.
- * @param slaveId ID del esclavo que respondió.
+ * @brief Parses the discovery response and updates the slave list.
+ * @details Decodes the 8 parameter registers and creates or updates the entry in `slaveList`.
+ * @param response Raw data received.
+ * @param slaveId ID of the slave that responded.
  * @ingroup group_modbus_discovery
  */
 void parseAndStoreDiscoveryResponse(const ResponseFormat& response, uint8_t slaveId) {
@@ -533,9 +533,9 @@ void parseAndStoreDiscoveryResponse(const ResponseFormat& response, uint8_t slav
 }
 
 /**
- * @brief Tarea Gestor de Eventos.
- * @details Centraliza las peticiones de las colas (Scheduler y Peripheral) y las convierte
- * en transacciones Modbus reales.
+ * @brief Event Manager task.
+ * @details Centralizes requests from the queues (Scheduler and Peripheral) and converts them
+ * into actual Modbus transactions.
  * @ingroup group_modbus_discovery
  */
 void EventManager(void *pvParameters) {
@@ -590,17 +590,17 @@ void EventManager(void *pvParameters) {
     }
 }
 
-// ==================== EMPAQUETADOR DE BITS ====================
+// ==================== BIT PACKER ====================
 /**
  * @struct BitPacker
- * @brief Utilidad para empaquetar bits arbitrarios en un flujo de bytes.
- * @details Permite comprimir datos cuando `compressedBytes` > 0.
+ * @brief Utility for packing arbitrary bits into a byte stream.
+ * @details Allows data compression when `compressedBytes` > 0.
  * @ingroup group_data_format
  */
 struct BitPacker
 {
-    uint64_t buffer = 0; ///< Acumulador temporal de hasta 64 bits.
-    int bits_usados = 0; ///< Contador de bits válidos en el buffer.
+    uint64_t buffer = 0; ///< Temporary accumulator of up to 64 bits.
+    int bits_usados = 0; ///< Counter of valid bits in the buffer.
 
     void push(uint16_t valor, int nbits, std::vector<uint8_t> &out)
     {
@@ -634,11 +634,11 @@ struct BitPacker
 };
 
 /**
- * @brief Extrae y formatea los datos de una respuesta Modbus de muestreo.
- * @param response Respuesta cruda recibida.
- * @param request Información de la solicitud original.
- * @param values Vector de salida donde se guardarán los bytes procesados.
- * @return true si el proceso fue exitoso.
+ * @brief Extracts and formats data from a sampling Modbus response.
+ * @param response Raw response received.
+ * @param request Information from the original request.
+ * @param values Output vector where the processed bytes will be stored.
+ * @return true if the process was successful.
  * @ingroup group_data_format
  */
 static bool formatAndEnqueueSensorData(const ResponseFormat& response, const ModbusRequestInfo& request, std::vector<uint8_t>& values) {
@@ -727,29 +727,29 @@ static bool formatAndEnqueueSensorData(const ResponseFormat& response, const Mod
 
 /**
  * @def MAX_SENSOR_PAYLOAD
- * @brief Tamaño máximo del payload de un sensor individual.
+ * @brief Maximum size of an individual sensor payload.
  * @ingroup group_data_format
  */
-#define MAX_SENSOR_PAYLOAD 128 ///< Tamaño máximo del payload de un sensor individual.
+#define MAX_SENSOR_PAYLOAD 128 ///< Maximum size of an individual sensor payload.
 
 /**
  * @struct SensorDataPayload
- * @brief Contenedor para los datos procesados de un sensor, listo para ser agregado.
+ * @brief Container for processed sensor data, ready for aggregation.
  * @ingroup group_data_format
  */
 struct SensorDataPayload {
-    uint8_t slaveId;                  ///< ID del esclavo origen.
-    uint8_t sensorId;                 ///< ID del sensor origen.
-    uint8_t data[MAX_SENSOR_PAYLOAD]; ///< Array de datos de tamaño fijo.
-    size_t dataSize;                  ///< Cantidad de bytes válidos en data.
+    uint8_t slaveId;                  ///< Source slave ID.
+    uint8_t sensorId;                 ///< Source sensor ID.
+    uint8_t data[MAX_SENSOR_PAYLOAD]; ///< Fixed-size data array.
+    size_t dataSize;                  ///< Number of valid bytes in data.
 };
 
-QueueHandle_t queueSensorDataPayload; ///< Cola para payloads de sensores procesados.
+QueueHandle_t queueSensorDataPayload; ///< Queue for processed sensor payloads.
 
 /**
- * @brief Tarea Formateador de Datos.
- * @details Consume respuestas de `queueRespuestas`, las procesa según su tipo (Descubrimiento o Muestreo)
- * y encola los resultados formateados.
+ * @brief Data Formatter task.
+ * @details Consumes responses from `queueRespuestas`, processes them according to their type (Discovery or Sampling)
+ * and enqueues the formatted results.
  * @ingroup group_data_format
  */
 void DataFormatter (void *pvParameters) {
@@ -869,28 +869,28 @@ void DataPrinterTask(void *pvParameters) {
     }
 }
 
-// --- Mapeo de Sensor ID a Bits del Activate Byte ---
-// ¡IMPORTANTE! Debes ajustar estos IDs a los que uses en tu sistema.
-// Estos son solo ejemplos basados en el contexto.
-const uint8_t SENSOR_ID_BATERIA = 0;   ///< Asignado al Bit 0 del Activate Byte.
-const uint8_t SENSOR_ID_VOLTAJE = 1;   ///< Asignado al Bit 1 del Activate Byte.
-const uint8_t SENSOR_ID_CORRIENTE = 2; ///< Asignado al Bit 2 del Activate Byte.
-const uint8_t SENSOR_ID_EXT_START = 3; ///< Inicio de IDs para sensores externos (Bits 3-7).
-const int MAX_SENSORES_EXTERNOS = 5;   ///< Cantidad de bits restantes disponibles (3 al 7).
+// --- Mapping of Sensor ID to Activate Byte Bits ---
+// IMPORTANT! You must adjust these IDs to the ones used in your system.
+// These are just examples based on the context.
+const uint8_t SENSOR_ID_BATERIA = 0;   ///< Assigned to Bit 0 of the Activate Byte.
+const uint8_t SENSOR_ID_VOLTAJE = 1;   ///< Assigned to Bit 1 of the Activate Byte.
+const uint8_t SENSOR_ID_CORRIENTE = 2; ///< Assigned to Bit 2 of the Activate Byte.
+const uint8_t SENSOR_ID_EXT_START = 3; ///< Start of IDs for external sensors (Bits 3-7).
+const int MAX_SENSORES_EXTERNOS = 5;   ///< Number of remaining available bits (3 to 7).
 
 /**
  * @def AGGREGATION_INTERVAL_MS
- * @brief Intervalo de agregación (ms).
+ * @brief Aggregation interval (ms).
  * @ingroup group_data_format
  */
-#define AGGREGATION_INTERVAL_MS 6100 ///< Intervalo de agregación (6s + 100ms de margen).
+#define AGGREGATION_INTERVAL_MS 6100 ///< Aggregation interval (6s + 100ms margin).
 
 /**
- * @brief Construye un payload unificado a partir de una colección de datos de sensores.
- * @details Estructura del Payload: [ID_MSG][TIMESTAMP][ACTIVATE_BYTE][LEN_BYTES...][DATA_BLOCKS...]
- * @param id_mensaje El byte de ID del mensaje (Cabecera).
- * @param collectedPayloads El vector con los datos recolectados.
- * @return std::vector<uint8_t> El payload binario listo para enviar.
+ * @brief Builds a unified payload from a collection of sensor data.
+ * @details Payload Structure: [ID_MSG][TIMESTAMP][ACTIVATE_BYTE][LEN_BYTES...][DATA_BLOCKS...]
+ * @param id_mensaje The message ID byte (Header).
+ * @param collectedPayloads The vector with the collected data.
+ * @return std::vector<uint8_t> The binary payload ready to be sent.
  * @ingroup group_data_format
  */
 std::vector<uint8_t> construirPayloadUnificado(
@@ -1022,13 +1022,13 @@ std::vector<uint8_t> construirPayloadUnificado(
 
 
 // ==================== LORA CONFIG ====================
-// Deshabilitar ventana RX de recepción (si no se esperan downlinks)
+// Disable RX receive window (if no downlinks are expected)
 //#define DISABLE_INVERT_IQ_ON_RX 1
 //#define DISABLE_RX 1
 //#define CFG_sx1272_radio 1
 
 /**
- * @brief Funciones de configuración LMIC (placeholders).
+ * @brief LMIC configuration functions (placeholders).
  * @ingroup group_lorawan
  */
 void os_getArtEui(u1_t *buf) { memset(buf, 0, 8); }
@@ -1036,8 +1036,8 @@ void os_getDevEui(u1_t *buf) { memset(buf, 0, 8); }
 void os_getDevKey(u1_t *buf) { memset(buf, 0, 16); }
 
 /**
- * @brief Claves ABP y dirección de dispositivo (DEMO).
- * @warning Claves en texto plano, reemplazar en producción.
+ * @brief ABP keys and device address (DEMO).
+ * @warning Keys in plaintext, replace in production.
  * @ingroup group_lorawan
  */
 static u1_t NWKSKEY[16] = {
@@ -1052,10 +1052,10 @@ static u1_t APPSKEY[16] = {
 
 static const u4_t DEVADDR = 0x260C691F;
 
-// Configuración de pines LoRa
+// LoRa Pin Configuration
 ///**
-// * @brief Mapa de pines para el radio SX127x de la TTGO LoRa32.
-// * @details Define NSS, DIO0-DIO2 y pines no usados por LMIC.
+// * @brief Pin map for the SX127x radio of the TTGO LoRa32.
+// * @details Defines NSS, DIO0-DIO2 and pins not used by LMIC.
 // * @ingroup group_lorawan
 // */
 const lmic_pinmap lmic_pins = {.nss = 18,
@@ -1063,35 +1063,35 @@ const lmic_pinmap lmic_pins = {.nss = 18,
                                .rst = LMIC_UNUSED_PIN,
                                .dio = {26, 33, 32}};
 
-// Payload máximo para DR3
+// Max payload for DR3
 /**
  * @def LORA_PAYLOAD_MAX
- * @brief Tamaño máximo de payload para la DR usada.
+ * @brief Maximum payload size for the DR used.
  * @ingroup group_lorawan
  */
 constexpr size_t LORA_PAYLOAD_MAX = 220;
 
 /**
  * @struct Fragmento
- * @brief Fragmento binario listo para transmisión LoRaWAN.
- * @details Contiene el buffer y su longitud efectiva, producido por la tarea de agregación.
+ * @brief Binary fragment ready for LoRaWAN transmission.
+ * @details Contains the buffer and its effective length, produced by the aggregation task.
  * @ingroup group_lorawan
  */
 struct Fragmento {
-    uint8_t data[LORA_PAYLOAD_MAX]; ///< Buffer de datos.
-    size_t len;                     ///< Longitud de los datos.
+    uint8_t data[LORA_PAYLOAD_MAX]; ///< Data buffer.
+    size_t len;                     ///< Length of the data.
 };
 
-QueueHandle_t queueFragmentos;          ///< Cola para mensajes binarios LoRa.
-SemaphoreHandle_t semaforoEnvioCompleto; ///< Semáforo para sincronizar el fin de un ciclo de envío.
+QueueHandle_t queueFragmentos;          ///< Queue for binary LoRa messages.
+SemaphoreHandle_t semaforoEnvioCompleto; ///< Semaphore to synchronize the end of a sending cycle.
 
 // ==================== LORA CALLBACKS ====================
 /**
- * @brief Callback de eventos LMIC/LoRaWAN.
- * @details Maneja eventos de la pila LMIC y sincroniza el flujo de transmisión mediante `semaforoEnvioCompleto`.
- * - EV_TXCOMPLETE: indica fin de TX y libera el semáforo.
- * - TXRX_ACK: se informa si se recibió ACK de la red.
- * @param ev Evento reportado por LMIC.
+ * @brief LMIC/LoRaWAN event callback.
+ * @details Handles events from the LMIC stack and synchronizes the transmission flow using `semaforoEnvioCompleto`.
+ * - EV_TXCOMPLETE: indicates end of TX and releases the semaphore.
+ * - TXRX_ACK: reports if an ACK was received from the network.
+ * @param ev Event reported by LMIC.
  * @ingroup group_lorawan
  */
 void onEvent(ev_t ev) {
@@ -1105,15 +1105,15 @@ void onEvent(ev_t ev) {
     }
 }
 
-// ==================== FUNCIONES LORA ====================
+// ==================== LORA FUNCTIONS ====================
 /**
- * @brief Inicializa la pila LMIC y configura LoRaWAN (ABP, US915).
+ * @brief Initializes the LMIC stack and configures LoRaWAN (ABP, US915).
  * @details
- * - Llama `os_init()` y `LMIC_reset()`.
- * - Ajusta `LMIC_setClockError()` (1%) para tolerancia del cristal.
- * - Configura sesión ABP con `LMIC_setSession()` y región US915 (`LMIC_selectSubBand(7)`).
- * - Desactiva ADR y LinkCheck para simplificar el flujo.
- * @note Ajustar sub-banda, DR y potencia según gateway/región.
+ * - Calls `os_init()` and `LMIC_reset()`.
+ * - Adjusts `LMIC_setClockError()` (1%) for crystal tolerance.
+ * - Configures ABP session with `LMIC_setSession()` and US915 region (`LMIC_selectSubBand(7)`).
+ * - Disables ADR and LinkCheck to simplify the flow.
+ * @note Adjust sub-banda, DR y potencia según gateway/región.
  * @ingroup group_lorawan
  */
 void initLoRa() {
@@ -1131,11 +1131,11 @@ void initLoRa() {
 
 // ==================== TAREA LORA ====================
 /**
- * @brief Tarea dedicada al envío de datos por LoRaWAN.
+ * @brief Task dedicated to sending data via LoRaWAN.
  * @details
- * - Espera fragmentos en `queueFragmentos`.
- * - Toma el `semaforoEnvioCompleto` para serializar envíos.
- * - Llama `LMIC_setTxData2()` con el puerto de aplicación 1 y sin confirmación (confirmed=0).
+ * - Waits for fragments in `queueFragmentos`.
+ * - Takes `semaforoEnvioCompleto` to serialize transmissions.
+ * - Calls `LMIC_setTxData2()` with application port 1 and without confirmation (confirmed=0).
  * @ingroup group_lorawan
  */
 void tareaLoRa(void *pvParameters) {
@@ -1159,8 +1159,8 @@ void tareaLoRa(void *pvParameters) {
 }
 
 /**
- * @brief Tarea del runloop LMIC.
- * @details Ejecuta `os_runloop_once()` en un bucle para procesar timers y eventos internos de LMIC.
+ * @brief LMIC runloop task.
+ * @details Executes `os_runloop_once()` in a loop to process timers and internal LMIC events.
  * @ingroup group_lorawan
  */
 void tareaRunLoop(void *pvParameters) {
@@ -1170,12 +1170,12 @@ void tareaRunLoop(void *pvParameters) {
     }
 }
 
-#define AGGREGATION_INTERVAL_MS 6100 ///< Intervalo de agregación (6s + 100ms de margen).
+#define AGGREGATION_INTERVAL_MS 6100 ///< Aggregation interval (6s + 100ms margin).
 
 /**
- * @brief Tarea proactiva que recolecta y empaqueta datos de sensores a un ritmo fijo.
- * @details Se despierta cada AGGREGATION_INTERVAL_MS, vacía la cola de datos y envía un
- * único payload LoRaWAN si ha recolectado algo.
+ * @brief Proactive task that collects and packages sensor data at a fixed rate.
+ * @details Wakes up every AGGREGATION_INTERVAL_MS, empties the data queue, and sends a
+ * single LoRaWAN payload if it has collected anything.
  * @ingroup group_data_format
  */
 void DataAggregatorTask(void *pvParameters) {
@@ -1225,7 +1225,7 @@ void DataAggregatorTask(void *pvParameters) {
     }
 }
 
-// ==================== SETUP Y LOOP ====================
+// ==================== SETUP AND LOOP ====================
 void setup() {
     Serial.begin(115200); // 115200 es más estándar y estable que 921600
     while (!Serial); // Espera a que el puerto serie esté listo
@@ -1283,7 +1283,7 @@ void setup() {
 }
 
 void loop() {
-    // El loop principal puede quedar vacío o usarse para tareas de baja prioridad.
-    // Es mejor que la tarea del loop no se elimine y simplemente ceda el control.
+    // The main loop can be left empty or used for low-priority tasks.
+    // It's better that the loop task is not deleted and simply yields control.
     vTaskDelay(pdMS_TO_TICKS(1000));
 }

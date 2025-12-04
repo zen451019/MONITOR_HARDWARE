@@ -98,30 +98,30 @@ $(function(){initNavTree('struct_modbus_request_info.html','','struct_modbus_req
 </div><!--header-->
 <div class="contents">
 
-<p>Contexto de una solicitud Modbus en vuelo.  
+<p>Context of an in-flight Modbus request.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-pub-attribs" class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
 <tr class="memitem:addd579a6c2d8d6a7d1e92db614348c4d" id="r_addd579a6c2d8d6a7d1e92db614348c4d"><td class="memItemLeft" align="right" valign="top"><a id="addd579a6c2d8d6a7d1e92db614348c4d" name="addd579a6c2d8d6a7d1e92db614348c4d"></a>
 uint32_t&#160;</td><td class="memItemRight" valign="bottom"><b>token</b></td></tr>
-<tr class="memdesc:addd579a6c2d8d6a7d1e92db614348c4d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Token único de la transacción. <br /></td></tr>
+<tr class="memdesc:addd579a6c2d8d6a7d1e92db614348c4d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Unique transaction token. <br /></td></tr>
 <tr class="memitem:a4c4a96aa5704784fb9139d5e7f4e0a8d" id="r_a4c4a96aa5704784fb9139d5e7f4e0a8d"><td class="memItemLeft" align="right" valign="top"><a id="a4c4a96aa5704784fb9139d5e7f4e0a8d" name="a4c4a96aa5704784fb9139d5e7f4e0a8d"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>slaveId</b></td></tr>
-<tr class="memdesc:a4c4a96aa5704784fb9139d5e7f4e0a8d"><td class="mdescLeft">&#160;</td><td class="mdescRight">ID del esclavo destino. <br /></td></tr>
+<tr class="memdesc:a4c4a96aa5704784fb9139d5e7f4e0a8d"><td class="mdescLeft">&#160;</td><td class="mdescRight">ID of the target slave. <br /></td></tr>
 <tr class="memitem:a502153e9809f7780f74c8b95b71036a3" id="r_a502153e9809f7780f74c8b95b71036a3"><td class="memItemLeft" align="right" valign="top"><a id="a502153e9809f7780f74c8b95b71036a3" name="a502153e9809f7780f74c8b95b71036a3"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>sensorId</b></td></tr>
-<tr class="memdesc:a502153e9809f7780f74c8b95b71036a3"><td class="mdescLeft">&#160;</td><td class="mdescRight">ID del sensor objetivo. <br /></td></tr>
+<tr class="memdesc:a502153e9809f7780f74c8b95b71036a3"><td class="mdescLeft">&#160;</td><td class="mdescRight">ID of the target sensor. <br /></td></tr>
 <tr class="memitem:a1a1681202a2033e7159e75f2531f014f" id="r_a1a1681202a2033e7159e75f2531f014f"><td class="memItemLeft" align="right" valign="top"><a id="a1a1681202a2033e7159e75f2531f014f" name="a1a1681202a2033e7159e75f2531f014f"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>functionCode</b></td></tr>
-<tr class="memdesc:a1a1681202a2033e7159e75f2531f014f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Código de función Modbus utilizado. <br /></td></tr>
+<tr class="memdesc:a1a1681202a2033e7159e75f2531f014f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Modbus function code used. <br /></td></tr>
 <tr class="memitem:a2f735cf349ca7c974ed654bed2808455" id="r_a2f735cf349ca7c974ed654bed2808455"><td class="memItemLeft" align="right" valign="top"><a id="a2f735cf349ca7c974ed654bed2808455" name="a2f735cf349ca7c974ed654bed2808455"></a>
 <a class="el" href="group__group__modbus__discovery.html#gae10b07f2d0feb103db7fe4cfd192e5af">RequestType</a>&#160;</td><td class="memItemRight" valign="bottom"><b>type</b></td></tr>
-<tr class="memdesc:a2f735cf349ca7c974ed654bed2808455"><td class="mdescLeft">&#160;</td><td class="mdescRight">Propósito de la solicitud (Descubrimiento o Muestreo). <br /></td></tr>
+<tr class="memdesc:a2f735cf349ca7c974ed654bed2808455"><td class="mdescLeft">&#160;</td><td class="mdescRight">Purpose of the request (Discovery or Sampling). <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Contexto de una solicitud Modbus en vuelo. </p>
-<p>Permite rastrear el origen y propósito de una petición asíncrona. </p>
+<div class="textblock"><p>Context of an in-flight Modbus request. </p>
+<p>Allows tracking the origin and purpose of an asynchronous request. </p>
 </div><hr/>The documentation for this struct was generated from the following file:<ul>
 <li>src/<a class="el" href="main_8cpp.html">main.cpp</a></li>
 </ul>

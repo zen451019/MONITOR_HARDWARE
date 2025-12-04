@@ -98,39 +98,39 @@ $(function(){initNavTree('struct_modbus_sensor_param.html','','struct_modbus_sen
 </div><!--header-->
 <div class="contents">
 
-<p>Define los parámetros de configuración de un sensor individual.  
+<p>Defines the configuration parameters for an individual sensor.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-pub-attribs" class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
 <tr class="memitem:a2ba74610b0ad901f3e5aef4c612fc3b4" id="r_a2ba74610b0ad901f3e5aef4c612fc3b4"><td class="memItemLeft" align="right" valign="top"><a id="a2ba74610b0ad901f3e5aef4c612fc3b4" name="a2ba74610b0ad901f3e5aef4c612fc3b4"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>sensorID</b></td></tr>
-<tr class="memdesc:a2ba74610b0ad901f3e5aef4c612fc3b4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Identificador único del sensor. <br /></td></tr>
+<tr class="memdesc:a2ba74610b0ad901f3e5aef4c612fc3b4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Unique sensor identifier. <br /></td></tr>
 <tr class="memitem:ad98ef02a850e274855fa238080343964" id="r_ad98ef02a850e274855fa238080343964"><td class="memItemLeft" align="right" valign="top"><a id="ad98ef02a850e274855fa238080343964" name="ad98ef02a850e274855fa238080343964"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>numberOfChannels</b></td></tr>
-<tr class="memdesc:ad98ef02a850e274855fa238080343964"><td class="mdescLeft">&#160;</td><td class="mdescRight">Número de canales de datos del sensor. <br /></td></tr>
+<tr class="memdesc:ad98ef02a850e274855fa238080343964"><td class="mdescLeft">&#160;</td><td class="mdescRight">Number of data channels for the sensor. <br /></td></tr>
 <tr class="memitem:a05f0b0e1e6356bf737f21754af6f06e3" id="r_a05f0b0e1e6356bf737f21754af6f06e3"><td class="memItemLeft" align="right" valign="top"><a id="a05f0b0e1e6356bf737f21754af6f06e3" name="a05f0b0e1e6356bf737f21754af6f06e3"></a>
 uint16_t&#160;</td><td class="memItemRight" valign="bottom"><b>startAddress</b></td></tr>
-<tr class="memdesc:a05f0b0e1e6356bf737f21754af6f06e3"><td class="mdescLeft">&#160;</td><td class="mdescRight">Dirección de registro inicial Modbus. <br /></td></tr>
+<tr class="memdesc:a05f0b0e1e6356bf737f21754af6f06e3"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initial Modbus register address. <br /></td></tr>
 <tr class="memitem:ac4b36098e6f0b3ad32493a2ba623ad8d" id="r_ac4b36098e6f0b3ad32493a2ba623ad8d"><td class="memItemLeft" align="right" valign="top"><a id="ac4b36098e6f0b3ad32493a2ba623ad8d" name="ac4b36098e6f0b3ad32493a2ba623ad8d"></a>
 uint16_t&#160;</td><td class="memItemRight" valign="bottom"><b>maxRegisters</b></td></tr>
-<tr class="memdesc:ac4b36098e6f0b3ad32493a2ba623ad8d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Cantidad total de registros a leer. <br /></td></tr>
+<tr class="memdesc:ac4b36098e6f0b3ad32493a2ba623ad8d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Total number of registers to read. <br /></td></tr>
 <tr class="memitem:ab1387b9ab39b6acbcc33ed206ae68b38" id="r_ab1387b9ab39b6acbcc33ed206ae68b38"><td class="memItemLeft" align="right" valign="top"><a id="ab1387b9ab39b6acbcc33ed206ae68b38" name="ab1387b9ab39b6acbcc33ed206ae68b38"></a>
 uint16_t&#160;</td><td class="memItemRight" valign="bottom"><b>samplingInterval</b></td></tr>
-<tr class="memdesc:ab1387b9ab39b6acbcc33ed206ae68b38"><td class="mdescLeft">&#160;</td><td class="mdescRight">Intervalo de muestreo base en milisegundos. <br /></td></tr>
+<tr class="memdesc:ab1387b9ab39b6acbcc33ed206ae68b38"><td class="mdescLeft">&#160;</td><td class="mdescRight">Base sampling interval in milliseconds. <br /></td></tr>
 <tr class="memitem:aa2671517f9085813612fd9bc23f39e18" id="r_aa2671517f9085813612fd9bc23f39e18"><td class="memItemLeft" align="right" valign="top"><a id="aa2671517f9085813612fd9bc23f39e18" name="aa2671517f9085813612fd9bc23f39e18"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>dataType</b></td></tr>
-<tr class="memdesc:aa2671517f9085813612fd9bc23f39e18"><td class="mdescLeft">&#160;</td><td class="mdescRight">Tipo de dato: 1=uint8, 2=uint16, 3=compressed bytes, 4=float16. <br /></td></tr>
+<tr class="memdesc:aa2671517f9085813612fd9bc23f39e18"><td class="mdescLeft">&#160;</td><td class="mdescRight">Data type: 1=uint8, 2=uint16, 3=compressed bytes, 4=float16. <br /></td></tr>
 <tr class="memitem:abe04f837471525361d69b7a0e1d3565f" id="r_abe04f837471525361d69b7a0e1d3565f"><td class="memItemLeft" align="right" valign="top"><a id="abe04f837471525361d69b7a0e1d3565f" name="abe04f837471525361d69b7a0e1d3565f"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>scale</b></td></tr>
-<tr class="memdesc:abe04f837471525361d69b7a0e1d3565f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Factor de escala decimal (10^scale). <br /></td></tr>
+<tr class="memdesc:abe04f837471525361d69b7a0e1d3565f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Decimal scale factor (10^scale). <br /></td></tr>
 <tr class="memitem:a75de2e3796af5c5026559e921c645fb2" id="r_a75de2e3796af5c5026559e921c645fb2"><td class="memItemLeft" align="right" valign="top"><a id="a75de2e3796af5c5026559e921c645fb2" name="a75de2e3796af5c5026559e921c645fb2"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>compressedBytes</b></td></tr>
-<tr class="memdesc:a75de2e3796af5c5026559e921c645fb2"><td class="mdescLeft">&#160;</td><td class="mdescRight">Número de bytes por valor si se usa compresión (dataType=3). <br /></td></tr>
+<tr class="memdesc:a75de2e3796af5c5026559e921c645fb2"><td class="mdescLeft">&#160;</td><td class="mdescRight">Number of bytes per value if compression is used (dataType=3). <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Define los parámetros de configuración de un sensor individual. </p>
-<p>Esta estructura almacena cómo leer e interpretar los datos de un sensor específico. </p>
+<div class="textblock"><p>Defines the configuration parameters for an individual sensor. </p>
+<p>This structure stores how to read and interpret data from a specific sensor. </p>
 </div><hr/>The documentation for this struct was generated from the following file:<ul>
 <li>src/<a class="el" href="main_8cpp.html">main.cpp</a></li>
 </ul>

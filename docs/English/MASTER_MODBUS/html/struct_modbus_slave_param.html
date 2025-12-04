@@ -98,24 +98,24 @@ $(function(){initNavTree('struct_modbus_slave_param.html','','struct_modbus_slav
 </div><!--header-->
 <div class="contents">
 
-<p>Vector global que almacena la configuración y estado de todos los esclavos Modbus descubiertos.  
+<p>Global vector that stores the configuration and state of all discovered Modbus slaves.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-pub-attribs" class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
 <tr class="memitem:a937febe35c9d6eb970161b422bbe5c3d" id="r_a937febe35c9d6eb970161b422bbe5c3d"><td class="memItemLeft" align="right" valign="top"><a id="a937febe35c9d6eb970161b422bbe5c3d" name="a937febe35c9d6eb970161b422bbe5c3d"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>slaveID</b></td></tr>
-<tr class="memdesc:a937febe35c9d6eb970161b422bbe5c3d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Dirección Modbus del esclavo (1-247). <br /></td></tr>
+<tr class="memdesc:a937febe35c9d6eb970161b422bbe5c3d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Modbus address of the slave (1-247). <br /></td></tr>
 <tr class="memitem:a3323379e7d93b8aef9d76cff0bbdb3d7" id="r_a3323379e7d93b8aef9d76cff0bbdb3d7"><td class="memItemLeft" align="right" valign="top"><a id="a3323379e7d93b8aef9d76cff0bbdb3d7" name="a3323379e7d93b8aef9d76cff0bbdb3d7"></a>
 std::vector&lt; <a class="el" href="struct_modbus_sensor_param.html">ModbusSensorParam</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><b>sensors</b></td></tr>
-<tr class="memdesc:a3323379e7d93b8aef9d76cff0bbdb3d7"><td class="mdescLeft">&#160;</td><td class="mdescRight">Vector con los sensores asociados a este esclavo. <br /></td></tr>
+<tr class="memdesc:a3323379e7d93b8aef9d76cff0bbdb3d7"><td class="mdescLeft">&#160;</td><td class="mdescRight">Vector with the sensors associated with this slave. <br /></td></tr>
 <tr class="memitem:af6a0cb55978342e2889a409b5f5132b5" id="r_af6a0cb55978342e2889a409b5f5132b5"><td class="memItemLeft" align="right" valign="top"><a id="af6a0cb55978342e2889a409b5f5132b5" name="af6a0cb55978342e2889a409b5f5132b5"></a>
 uint8_t&#160;</td><td class="memItemRight" valign="bottom"><b>consecutiveFails</b></td></tr>
-<tr class="memdesc:af6a0cb55978342e2889a409b5f5132b5"><td class="mdescLeft">&#160;</td><td class="mdescRight">Contador de fallos consecutivos para gestión de errores. <br /></td></tr>
+<tr class="memdesc:af6a0cb55978342e2889a409b5f5132b5"><td class="mdescLeft">&#160;</td><td class="mdescRight">Counter of consecutive failures for error handling. <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Vector global que almacena la configuración y estado de todos los esclavos Modbus descubiertos. </p>
-<p>Representa un dispositivo esclavo físico en el bus RS485. </p>
+<div class="textblock"><p>Global vector that stores the configuration and state of all discovered Modbus slaves. </p>
+<p>Represents a physical slave device on the RS485 bus. </p>
 </div><hr/>The documentation for this struct was generated from the following file:<ul>
 <li>src/<a class="el" href="main_8cpp.html">main.cpp</a></li>
 </ul>
