@@ -8,15 +8,15 @@ The system is optimized to capture, process, and transmit voltage and current da
 ## Modbus master monitor documentation
 
 English
-https://zen451019.github.io/MONITOR_HARDWARE/English/MASTER_MODBUS/html/index.html
+https://zen451019.github.io/MONITOR_HARDWARE/28-11-25/English/MASTER_MODBUS/html/index.html
 
 Spanish
-https://zen451019.github.io/MONITOR_HARDWARE/Español/MASTER_MODBUS/html/index.html
+https://zen451019.github.io/MONITOR_HARDWARE/28-11-25/Español/MASTER_MODBUS/html/index.html
 
 
 ## Modbus slave monitor documentation
 English
-https://zen451019.github.io/MONITOR_HARDWARE/English/SLAVE_MODBUS/html/index.html
+https://zen451019.github.io/MONITOR_HARDWARE/28-11-25/English/SLAVE_MODBUS/html/index.html
 
 Spanish
-https://zen451019.github.io/MONITOR_HARDWARE/Español/SLAVE_MODBUS/html/index.html
+https://zen451019.github.io/MONITOR_HARDWARE/28-11-25/Español/SLAVE_MODBUS/html/index.html
