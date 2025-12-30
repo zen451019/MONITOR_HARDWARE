@@ -133,6 +133,48 @@ void initScheduler() {
     }
 }
 
+/**
+ * @brief Procesa una solicitud de muestreo para un sensor específico.
+ * @details Realiza la lectura Modbus, formatea los datos en caso de éxito,
+ * o gestiona el contador de fallos en caso de error.
+ * @param item El elemento del planificador a procesar.
+ * @return true si el esclavo asociado sigue activo, false si fue eliminado por fallos.
+ */
+bool handleScheduledSensor(const SensorSchedule& item) {
+    const uint8_t MAX_CONSECUTIVE_FAILS = 3;
+
+    Serial.printf("Solicitando muestreo: SlaveID=%u, SensorID=%u\n", item.slaveID, item.sensorID);
+    
+    uint16_t startAddr, numRegs;
+    if (!getSensorParams(item.slaveID, item.sensorID, startAddr, numRegs)) {
+        Serial.printf("Error: No se encontraron parámetros para Esclavo %u, Sensor %u.\n", item.slaveID, item.sensorID);
+        return true; // El esclavo sigue existiendo, aunque el sensor no se encontró.
+    }
+
+    ModbusApiResult result = modbus_api_read_registers(item.slaveID, READ_HOLD_REGISTER, startAddr, numRegs, 2000);
+
+    auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(), [&](const ModbusSlaveParam& s) { return s.slaveID == item.slaveID; });
+    if (slaveIt == slaveList.end()) {
+        // El esclavo fue eliminado por otra operación, no hay nada que hacer.
+        return false;
+    }
+
+    if (result.error_code == ModbusApiError::SUCCESS) {
+        formatAndEnqueueSensorData(result, item.slaveID, item.sensorID);
+        slaveIt->consecutiveFails = 0;
+    } else {
+        Serial.printf("Error en muestreo para Esclavo %u, Sensor %u. Código: %u\n", item.slaveID, item.sensorID, static_cast<uint8_t>(result.error_code));
+        slaveIt->consecutiveFails++;
+        Serial.printf("Fallo consecutivo %u para esclavo %u.\n", slaveIt->consecutiveFails, item.slaveID);
+        
+        if (slaveIt->consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
+            Serial.printf("Esclavo %u ha alcanzado el máximo de fallos. Eliminando...\n", item.slaveID);
+            slaveList.erase(slaveIt);
+            return false; // Indica que el esclavo fue eliminado.
+        }
+    }
+    return true; // El esclavo sigue activo.
+}
 
 
 std::vector<uint8_t> dispositivosAConsultar = {1, 2, 3}; ///< Predefined list of Modbus IDs to scan at startup.
@@ -146,8 +188,6 @@ struct EventManagerFormat {
     uint8_t sensorID;   ///< Sensor ID (0 for general commands).
     uint16_t order;     ///< Order type or auxiliary parameter.
 };
-
-
 
 /**
  * @brief One-shot task for the initial discovery of sensors.
@@ -188,29 +228,19 @@ void DataRequestScheduler(void *pvParameters) {
         uint32_t now = millis();
         TickType_t sleepTime = pdMS_TO_TICKS(1000); // Por defecto, esperar 1s si no hay nada que hacer
 
-        // Tomar el control para leer la lista de planificación
         if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
             
             if (!scheduleList.empty()) {
                 uint32_t nextEventTime = UINT32_MAX;
+                bool schedulerNeedsRebuild = false;
 
                 for (auto& item : scheduleList) {
                     if (now >= item.nextSampleTime) {
-                        // Es hora de muestrear
-                        Serial.printf("Solicitando muestreo: SlaveID=%u, SensorID=%u\n", item.slaveID, item.sensorID);
-                        
-                        uint16_t startAddr, numRegs;
-                        if (getSensorParams(item.slaveID, item.sensorID, startAddr, numRegs)) {
-                            // Llamada síncrona a la API
-                            ModbusApiResult result = modbus_api_read_registers(item.slaveID, READ_HOLD_REGISTER, startAddr, numRegs, 2000);
-
-                            if (result.error_code == ModbusApiError::SUCCESS) {
-                                // Procesar y encolar los datos inmediatamente
-                                formatAndEnqueueSensorData(result, item.slaveID, item.sensorID);
-                            } else {
-                                Serial.printf("Error en muestreo para Esclavo %u, Sensor %u. Código: %u\n", item.slaveID, item.sensorID, static_cast<uint8_t>(result.error_code));
-                                // Aquí puedes implementar la lógica de reintentos/eliminación de esclavo
-                            }
+                        // Es hora de muestrear. Llama a la nueva función.
+                        if (!handleScheduledSensor(item)) {
+                            // El esclavo fue eliminado, necesitamos reconstruir el planificador.
+                            schedulerNeedsRebuild = true;
+                            break; // Salir del bucle para reconstruir.
                         }
                         
                         // Actualizar el próximo tiempo de muestreo
@@ -222,22 +252,23 @@ void DataRequestScheduler(void *pvParameters) {
                     }
                 }
 
-                // Calcular cuánto dormir hasta el próximo evento
-                now = millis(); // Actualizar 'now' por si el bucle tardó mucho
-                if (nextEventTime > now) {
-                    sleepTime = pdMS_TO_TICKS(nextEventTime - now);
+                if (schedulerNeedsRebuild) {
+                    initScheduler(); // Reconstruye la lista de planificación.
                 } else {
-                    // Si todos los eventos ya pasaron, hacer una pequeña pausa para no saturar
-                    sleepTime = pdMS_TO_TICKS(10); 
+                    // Calcular cuánto dormir hasta el próximo evento
+                    now = millis(); // Actualizar 'now' por si el bucle tardó mucho
+                    if (nextEventTime > now) {
+                        sleepTime = pdMS_TO_TICKS(nextEventTime - now);
+                    } else {
+                        // Si todos los eventos ya pasaron, hacer una pequeña pausa para no saturar
+                        sleepTime = pdMS_TO_TICKS(10); 
+                    }
                 }
             }
-            // Si la lista está vacía, sleepTime mantiene su valor por defecto (1000 ms)
             
-            // Devolver el control
             xSemaphoreGive(schedulerMutex);
         }
 
-        // Dormir la cantidad de tiempo calculada
         vTaskDelay(sleepTime);
     }
 }
@@ -936,22 +967,10 @@ void setup() {
 
     // Crear colas y semáforos
     schedulerMutex = xSemaphoreCreateMutex();
-    // YA NO SON NECESARIAS
-    // queueEventos_Peripheral = xQueueCreate(10, sizeof(EventManagerFormat));
-    // queueEventos_Scheduler = xQueueCreate(10, sizeof(EventManagerFormat));
-    // queueRespuestas = xQueueCreate(10, sizeof(ResponseFormat));
 
     queueSensorDataPayload = xQueueCreate(10, sizeof(SensorDataPayload));
-
-    // YA NO ES NECESARIA
-    // xTaskCreatePinnedToCore(EventManager, "EventManager", 4096, NULL, 4, NULL, 0);
     
     xTaskCreatePinnedToCore(DataRequestScheduler, "Scheduler", 4096, NULL, 3, NULL, 0);
-
-    // YA NO ES NECESARIA
-    // xTaskCreatePinnedToCore(DataFormatter, "DataFormatter", 4096, NULL, 2, NULL, 0);
-
-    //xTaskCreatePinnedToCore(DataPrinterTask, "DataPrinter", 4096, NULL, 2, NULL, 0);
 
     // --- INICIAR DESCUBRIMIENTO ---
     // Creamos una tarea solo para el descubrimiento. Se ejecutará una vez y se borrará.
