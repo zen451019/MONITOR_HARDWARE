@@ -17,6 +17,15 @@
 #include <cstring>      ///< Utilidades de memoria (memcpy).
 #include <algorithm>
 #include "ModbusClientRTU.h"
+#include "ModbusAPI.h"
+
+// =================================================================================================
+// Forward Declarations
+// =================================================================================================
+bool discoverDeviceSensors(uint8_t deviceId);
+static bool formatAndEnqueueSensorData(const ModbusApiResult& response, uint8_t slaveId, uint8_t sensorId);
+void parseAndStoreDiscoveryResponse(const uint8_t* data, size_t length, uint8_t slaveId);
+bool getSensorParams(uint8_t slaveId, uint8_t sensorID, uint16_t& startAddr, uint16_t& numRegs);
 
 // =================================================================================================
 // Modbus RTU Configuration
@@ -34,12 +43,6 @@
  * @ingroup group_modbus_discovery
  */
 #define TX_PIN 12
-
-/**
- * @brief Global instance of the Modbus RTU client.
- * @ingroup group_modbus_discovery
- */
-ModbusClientRTU MB;
 
 /**
  * @struct ModbusSensorParam
@@ -71,111 +74,6 @@ struct ModbusSlaveParam {
 
 ///< Global vector that stores the configuration and state of all discovered Modbus slaves.
 std::vector<ModbusSlaveParam> slaveList;
-
-/**
- * @enum DiscoveryOrder
- * @brief Special commands used during the sensor discovery phase.
- * @ingroup group_modbus_discovery
- */
-enum DiscoveryOrder {
-    DISCOVERY_GET_COUNT = 1,          ///< Request item count.
-    DISCOVERY_GET_DATA_OFFSET = 255,  ///< Offset to get specific data.
-    DISCOVERY_READ_SENSOR_PARAM = 8   ///< Command to read sensor parameters (registers 0..7).
-};
-
-/**
- * @enum RequestType
- * @brief Classification of the purpose of a Modbus request.
- * @ingroup group_modbus_discovery
- */
-enum RequestType {
-    REQUEST_UNKNOWN,    ///< Unidentified request type.
-    REQUEST_DISCOVERY,  ///< Request related to hardware discovery.
-    REQUEST_SAMPLING    ///< Request for periodic data reading.
-};
-
-/**
- * @struct ModbusRequestInfo
- * @brief Context of an in-flight Modbus request.
- * @details Allows tracking the origin and purpose of an asynchronous request.
- * @ingroup group_modbus_discovery
- */
-struct ModbusRequestInfo {
-    uint32_t token;           ///< Unique transaction token.
-    uint8_t slaveId;          ///< ID of the target slave.
-    uint8_t sensorId;         ///< ID of the target sensor.
-    uint8_t functionCode;     ///< Modbus function code used.
-    RequestType type;         ///< Purpose of the request (Discovery or Sampling).
-};
-
-constexpr size_t MAX_REQUESTS = 16;             ///< Maximum size of the pending requests buffer.
-ModbusRequestInfo requestBuffer[MAX_REQUESTS];  ///< Circular buffer for requests.
-size_t requestHead = 0;                         ///< Write index of the circular buffer.
-
-/**
- * @brief Registers a new request in the circular buffer.
- * @param token Unique identifier.
- * @param slaveId Slave ID.
- * @param sensorId Sensor ID.
- * @param functionCode Modbus function.
- * @param type Request type.
- * @ingroup group_modbus_discovery
- */
-void addRequest(uint32_t token, uint8_t slaveId, uint8_t sensorId, uint8_t functionCode, RequestType type) {
-    requestBuffer[requestHead] = ModbusRequestInfo{token, slaveId, sensorId, functionCode, type};
-    requestHead = (requestHead + 1) % MAX_REQUESTS;
-}
-
-/**
- * @brief Searches for a pending request by its token.
- * @param token Token to search for.
- * @return Pointer to the ModbusRequestInfo structure or nullptr if it does not exist.
- * @ingroup group_modbus_discovery
- */
-ModbusRequestInfo* findRequestByToken(uint32_t token) {
-    for (size_t i = 0; i < MAX_REQUESTS; ++i) {
-        if (requestBuffer[i].token == token) {
-            return &requestBuffer[i];
-        }
-    }
-    return nullptr;
-}
-
-// =======================================================================
-// CALLBACK to handle successful data responses
-// =======================================================================
-
-/**
- * @def MAX_MODBUS_RESPONSE_LENGTH
- * @brief Maximum expected length for a Modbus response.
- * @ingroup group_modbus_discovery
- */
-#define MAX_MODBUS_RESPONSE_LENGTH 256 ///< Maximum expected length for a Modbus response.
-
-/**
- * @struct ResponseFormat
- * @brief Intermediate structure to pass data from the Modbus callback to tasks.
- * @ingroup group_modbus_discovery
- * @ingroup group_data_format
- */
-typedef struct {
-    uint8_t data[MAX_MODBUS_RESPONSE_LENGTH]; ///< Raw data buffer.
-    size_t length;      ///< Number of valid bytes in the buffer.
-    uint8_t deviceId;   ///< ID of the responding device (Optional).
-    uint32_t order;     ///< Order token for correlation (Optional).
-} ResponseFormat;
-
-/**
- * @brief Queue for received Modbus responses.
- * @ingroup group_modbus_discovery
- */
-QueueHandle_t queueRespuestas;
-/**
- * @brief Event queues to the EventManager (peripherals and scheduler).
- * @ingroup group_modbus_discovery
- */
-QueueHandle_t queueEventos_Peripheral;
-QueueHandle_t queueEventos_Scheduler;
 
 QueueHandle_t queueFragmentos;          ///< Queue for binary LoRa messages.
 SemaphoreHandle_t semaforoEnvioCompleto; ///< Semaphore to synchronize the end of a sending cycle.
@@ -235,85 +133,7 @@ void initScheduler() {
     }
 }
 
-/**
- * @brief Callback executed upon receiving valid Modbus data.
- * @param response Object with the raw response.
- * @param token Token of the original request.
- * @ingroup group_modbus_discovery
- */
-void handleData(ModbusMessage response, uint32_t token) {
-    ResponseFormat resp;
-    resp.length = response.size();
-    resp.deviceId = response.getServerID();
-    resp.order = token; // Puedes usar el token para correlacionar la respuesta con la solicitud
 
-    // Copia los datos recibidos
-    size_t len = resp.length < MAX_MODBUS_RESPONSE_LENGTH ? resp.length : MAX_MODBUS_RESPONSE_LENGTH;
-    for (size_t i = 0; i < len; ++i) {
-        resp.data[i] = response[i];
-    }
-    resp.length = len;
-
-    // Enviar la respuesta a la cola
-    xQueueSend(queueRespuestas, &resp, pdMS_TO_TICKS(10));
-}
-
-/**
- * @brief Callback executed when a Modbus error occurs.
- * @details Manages retry logic and removal of inactive slaves (Timeout).
- * @param error Error code.
- * @param token Token of the failed request.
- * @ingroup group_modbus_discovery
- */
-void handleError(Error error, uint32_t token) {
-    ModbusError me(error);
-    Serial.printf("\nError en respuesta para Token %u: %02X - %s\n", token, (int)me, (const char *)me);
-
-    // Solo nos interesa gestionar los timeouts
-    // 0xE0 = TIMEOUT
-    if ((const char *)me == "TIMEOUT") {
-        ModbusRequestInfo* request = findRequestByToken(token);
-        if (request) {
-            uint8_t failedSlaveId = request->slaveId;
-            Serial.printf("Timeout detectado para esclavo %u.\n", failedSlaveId);
-
-            // Buscar el esclavo en la lista principal
-            auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
-                [&](const ModbusSlaveParam& s) { return s.slaveID == failedSlaveId; });
-
-            if (slaveIt != slaveList.end()) {
-                slaveIt->consecutiveFails++;
-                Serial.printf("Esclavo %u ahora tiene %u fallos consecutivos.\n", failedSlaveId, slaveIt->consecutiveFails);
-
-                if (slaveIt->consecutiveFails >= 3) {
-                    Serial.printf("Esclavo %u ha alcanzado 3 fallos. Eliminando de la lista de activos.\n", failedSlaveId);
-                    
-                    // Eliminar el esclavo de la lista principal
-                    slaveList.erase(slaveIt);
-
-                    // Actualizar la lista del scheduler para que deje de pedirle datos
-                    // Usamos un mutex para proteger el acceso a scheduleList
-                    if (xSemaphoreTake(schedulerMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                        scheduleList.erase(
-                            std::remove_if(scheduleList.begin(), scheduleList.end(),
-                                [&](const SensorSchedule& s) { return s.slaveID == failedSlaveId; }),
-                            scheduleList.end()
-                        );
-                        xSemaphoreGive(schedulerMutex);
-                        initScheduler(); // Re-inicializar el scheduler con la nueva lista
-                        Serial.printf("Esclavo %u eliminado del scheduler.\n", failedSlaveId);
-                    } else {
-                        Serial.println("Error: No se pudo tomar el mutex del scheduler para eliminar el esclavo.");
-                    }
-                }
-            }
-            // Invalidar el token para no procesarlo de nuevo
-            request->token = 0; 
-        } else {
-            Serial.printf("Error: No se encontró la solicitud para el token %u.\n", token);
-        }
-    }
-}
 
 std::vector<uint8_t> dispositivosAConsultar = {1, 2, 3}; ///< Predefined list of Modbus IDs to scan at startup.
 
@@ -327,23 +147,7 @@ struct EventManagerFormat {
     uint16_t order;     ///< Order type or auxiliary parameter.
 };
 
-/**
- * @brief Starts the discovery process for a specific device.
- * @param deviceId Modbus ID of the device to query.
- * @return true if the event was queued correctly, false otherwise.
- * @ingroup group_modbus_discovery
- */
-bool discoverDeviceSensors(uint8_t deviceId) {
-    Serial.printf("Iniciando descubrimiento simple para dispositivo %u...\n", deviceId);
 
-    // Enviar una sola lectura: FC03 desde addr=0, qty=8
-    EventManagerFormat ev = {deviceId, 0, DISCOVERY_READ_SENSOR_PARAM};
-    if (xQueueSend(queueEventos_Peripheral, &ev, pdMS_TO_TICKS(10)) != pdTRUE) {
-        Serial.println("Error: No se pudo encolar el evento de descubrimiento (lectura 0..7).");
-        return false;
-    }
-    return true;
-}
 
 /**
  * @brief One-shot task for the initial discovery of sensors.
@@ -356,7 +160,7 @@ void initialDiscoveryTask(void *pvParameters) {
 
     for (uint8_t deviceId : dispositivosAConsultar) {
         if (discoverDeviceSensors(deviceId)) {
-            Serial.printf("Mensaje de descubrimiento enviado exitosamente para el dispositivo %u.\n", deviceId);
+            Serial.printf("Descubrimiento exitoso para el dispositivo %u.\n", deviceId);
         } else {
             Serial.printf("Fallo en el descubrimiento para el dispositivo %u.\n", deviceId);
         }
@@ -392,10 +196,22 @@ void DataRequestScheduler(void *pvParameters) {
 
                 for (auto& item : scheduleList) {
                     if (now >= item.nextSampleTime) {
-                        // Es hora de enviar el evento
-                        EventManagerFormat event = {item.slaveID, item.sensorID, 1};
-                        Serial.printf("Enviando solicitud de muestreo: SlaveID=%u, SensorID=%u, Intervalo=%u ms\n", item.slaveID, item.sensorID, item.samplingInterval);
-                        xQueueSend(queueEventos_Scheduler, &event, pdMS_TO_TICKS(10));
+                        // Es hora de muestrear
+                        Serial.printf("Solicitando muestreo: SlaveID=%u, SensorID=%u\n", item.slaveID, item.sensorID);
+                        
+                        uint16_t startAddr, numRegs;
+                        if (getSensorParams(item.slaveID, item.sensorID, startAddr, numRegs)) {
+                            // Llamada síncrona a la API
+                            ModbusApiResult result = modbus_api_read_registers(item.slaveID, READ_HOLD_REGISTER, startAddr, numRegs, 2000);
+
+                            if (result.error_code == ModbusApiError::SUCCESS) {
+                                // Procesar y encolar los datos inmediatamente
+                                formatAndEnqueueSensorData(result, item.slaveID, item.sensorID);
+                            } else {
+                                Serial.printf("Error en muestreo para Esclavo %u, Sensor %u. Código: %u\n", item.slaveID, item.sensorID, static_cast<uint8_t>(result.error_code));
+                                // Aquí puedes implementar la lógica de reintentos/eliminación de esclavo
+                            }
+                        }
                         
                         // Actualizar el próximo tiempo de muestreo
                         item.nextSampleTime = now + item.samplingInterval;
@@ -479,26 +295,23 @@ uint8_t getRegistersPerChannel(uint8_t slaveId, uint8_t sensorID) {
  * @param slaveId ID of the slave that responded.
  * @ingroup group_modbus_discovery
  */
-void parseAndStoreDiscoveryResponse(const ResponseFormat& response, uint8_t slaveId) {
+void parseAndStoreDiscoveryResponse(const uint8_t* data, size_t length, uint8_t slaveId) {
     // Se esperan 8 registros, que son 16 bytes de datos.
-    if (response.length < 16) {
-        Serial.printf("Error: Respuesta de descubrimiento incompleta para esclavo %u. Se esperaban 16 bytes, se recibieron %u.\n", slaveId, response.length);
+    if (length < 16) {
+        Serial.printf("Error: Respuesta de descubrimiento incompleta para esclavo %u. Se esperaban 16 bytes, se recibieron %u.\n", slaveId, length);
         return;
     }
 
     ModbusSensorParam newSensor;
-    // Asumimos que cada registro (2 bytes) corresponde a un campo de la estructura.
-    // Los datos de Modbus vienen en formato Big Endian.
-    // El offset correcto para los datos de registros Modbus es 3 (después del encabezado Modbus RTU)
-    // Cada registro son 2 bytes (big-endian)
-    newSensor.sensorID          = response.data[3 + 1];  // Reg 0: sensorID (byte bajo)
-    newSensor.numberOfChannels  = response.data[3 + 3];  // Reg 1: numberOfChannels (byte bajo)
-    newSensor.startAddress      = (response.data[3 + 4] << 8) | response.data[3 + 5];   // Reg 2: startAddress
-    newSensor.maxRegisters      = (response.data[3 + 6] << 8) | response.data[3 + 7];   // Reg 3: maxRegisters
-    newSensor.samplingInterval  = (response.data[3 + 8] << 8) | response.data[3 + 9];   // Reg 4: samplingInterval
-    newSensor.dataType          = response.data[3 + 11]; // Reg 5: dataType (byte bajo)
-    newSensor.scale             = response.data[3 + 13]; // Reg 6: scale (byte bajo)
-    newSensor.compressedBytes   = response.data[3 + 15]; // Reg 7: compressedBytes (byte bajo)
+    // Los datos de la API ya no tienen la cabecera Modbus, empiezan en el byte 0.
+    newSensor.sensorID          = data[1];  // Reg 0: sensorID (byte bajo)
+    newSensor.numberOfChannels  = data[3];  // Reg 1: numberOfChannels (byte bajo)
+    newSensor.startAddress      = (data[4] << 8) | data[5];   // Reg 2: startAddress
+    newSensor.maxRegisters      = (data[6] << 8) | data[7];   // Reg 3: maxRegisters
+    newSensor.samplingInterval  = (data[8] << 8) | data[9];   // Reg 4: samplingInterval
+    newSensor.dataType          = data[11]; // Reg 5: dataType (byte bajo)
+    newSensor.scale             = data[13]; // Reg 6: scale (byte bajo)
+    newSensor.compressedBytes   = data[15]; // Reg 7: compressedBytes (byte bajo)
 
     Serial.printf("Sensor descubierto en esclavo %u: ID=%u, Canales=%u, Addr=%u, Regs=%u, Intervalo=%u ms\n",
         slaveId, newSensor.sensorID, newSensor.numberOfChannels, newSensor.startAddress, newSensor.maxRegisters, newSensor.samplingInterval);
@@ -533,60 +346,26 @@ void parseAndStoreDiscoveryResponse(const ResponseFormat& response, uint8_t slav
 }
 
 /**
- * @brief Event Manager task.
- * @details Centralizes requests from the queues (Scheduler and Peripheral) and converts them
- * into actual Modbus transactions.
+ * @brief Starts the discovery process for a specific device.
+ * @param deviceId Modbus ID of the device to query.
+ * @return true if the event was queued correctly, false otherwise.
  * @ingroup group_modbus_discovery
  */
-void EventManager(void *pvParameters) {
-    uint32_t requestToken = 0;
-    while (true) {
-        EventManagerFormat event;
-        bool requestSent = false;
-        uint8_t functionCode = 0;
-        Error err = Error::SUCCESS;
-        RequestType reqType = REQUEST_UNKNOWN;
+bool discoverDeviceSensors(uint8_t deviceId) {
+    Serial.printf("Iniciando descubrimiento para dispositivo %u...\n", deviceId);
 
-        // Prioridad: primero scheduler, luego peripheral
-        if (xQueueReceive(queueEventos_Scheduler, &event, 0) == pdTRUE) {
-            uint16_t startAddr, numRegs;
-            if (getSensorParams(event.slaveId, event.sensorID, startAddr, numRegs)) {
-                functionCode = READ_HOLD_REGISTER;
-                reqType = REQUEST_SAMPLING;
-                if (++requestToken == 0) ++requestToken; // Evitar el token 0
-                err = MB.addRequest(requestToken, event.slaveId, functionCode, startAddr, numRegs);
-                requestSent = true;
-            } else {
-                Serial.printf("Parámetros no encontrados para SlaveID %u, SensorID %u\n", event.slaveId, event.sensorID);
-            }
-        } else if (xQueueReceive(queueEventos_Peripheral, &event, 0) == pdTRUE) {
-            reqType = REQUEST_DISCOVERY; // Todas las solicitudes de periféricos son de descubrimiento
-            if (event.order == DISCOVERY_READ_SENSOR_PARAM) {
-                functionCode = READ_HOLD_REGISTER;          // FC03
-                if (++requestToken == 0) ++requestToken; // Evitar el token 0
-                err = MB.addRequest(requestToken, event.slaveId, functionCode, 0, 8); // addr=0, qty=8
-                requestSent = true;
-            } else if (event.order == DISCOVERY_GET_COUNT) {
-                functionCode = READ_HOLD_REGISTER;
-                if (++requestToken == 0) ++requestToken; // Evitar el token 0
-                err = MB.addRequest(requestToken, event.slaveId, functionCode, 0, event.order);
-                requestSent = true;
-            } else if (event.order >= DISCOVERY_GET_DATA_OFFSET) {
-                uint16_t writeValue = event.order - DISCOVERY_GET_DATA_OFFSET;
-                functionCode = READ_HOLD_REGISTER; // Asumiendo que es la misma función
-                if (++requestToken == 0) ++requestToken; // Evitar el token 0
-                err = MB.addRequest(requestToken, event.slaveId, functionCode, DISCOVERY_GET_COUNT, writeValue);
-                requestSent = true;
-            }
-        }
+    // Llamada síncrona a la API para leer los 8 registros de parámetros
+    ModbusApiResult result = modbus_api_read_registers(deviceId, READ_HOLD_REGISTER, 0, 8, 2000);
 
-        if (requestSent && err == Error::SUCCESS) {
-            addRequest(requestToken, event.slaveId, event.sensorID, functionCode, reqType);
-        } else if (requestSent) {
-            Serial.printf("Error al encolar solicitud Modbus para token %u\n", requestToken);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10)); // Pequeño delay para evitar saturar la CPU
+    if (result.error_code == ModbusApiError::SUCCESS) {
+        Serial.printf("Respuesta de descubrimiento recibida para esclavo %u.\n", deviceId);
+        // La API ya quita la cabecera, pasamos los datos directamente
+        parseAndStoreDiscoveryResponse(result.data, result.data_len, deviceId);
+        return true;
+    } else {
+        Serial.printf("Error en descubrimiento para esclavo %u: Código %u\n", deviceId, static_cast<uint8_t>(result.error_code));
+        // Aquí puedes añadir la lógica para contar fallos si lo deseas
+        return false;
     }
 }
 
@@ -634,98 +413,6 @@ struct BitPacker
 };
 
 /**
- * @brief Extracts and formats data from a sampling Modbus response.
- * @param response Raw response received.
- * @param request Information from the original request.
- * @param values Output vector where the processed bytes will be stored.
- * @return true if the process was successful.
- * @ingroup group_data_format
- */
-static bool formatAndEnqueueSensorData(const ResponseFormat& response, const ModbusRequestInfo& request, std::vector<uint8_t>& values) {
-    uint8_t slaveId = request.slaveId;
-
-    auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
-        [&](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
-    if (slaveIt == slaveList.end()) {
-        Serial.printf("Formato: no se encontró el esclavo %u.\n", slaveId);
-        return false;
-    }
-
-    uint8_t sensorID = request.sensorId;
-
-    auto sensorIt = std::find_if(slaveIt->sensors.begin(), slaveIt->sensors.end(),
-        [&](const ModbusSensorParam& sensor) { return sensor.sensorID == sensorID; });
-    if (sensorIt == slaveIt->sensors.end()) {
-        Serial.printf("Formato: no se encontró el sensor %u en esclavo %u.\n", sensorID, slaveId);
-        return false;
-    }
-
-    const ModbusSensorParam& params = *sensorIt;
-    Serial.printf("Formato: esclavo %u sensor %u -> regs:%u tipo:%u escala:%u comp:%u\n",
-                  slaveId, params.sensorID, params.maxRegisters,
-                  params.dataType, params.scale, params.compressedBytes);
-
-    // --- INICIO: Bloque de depuración para imprimir bytes HIGH y LOW ---
-    Serial.print("  [Debug] Bytes HIGH/LOW recibidos: ");
-    // Los datos de registros comienzan en el índice 3 de la respuesta Modbus
-    for (size_t i = 0; i < params.maxRegisters; ++i) {
-        size_t offset = 3 + i * 2;
-        if ((offset + 1) < response.length) {
-            uint8_t high = response.data[offset];
-            uint8_t low  = response.data[offset + 1];
-            Serial.printf("[H:%u, L:%u] ", high, low);
-        } else {
-            break; // Salir si no hay suficientes datos para un par completo
-        }
-    }
-    Serial.println();
-    // --- FIN: Bloque de depuración ---
-
-    uint8_t dataType = params.dataType; // 1=uint8, 2=uint16
-    uint8_t scale = params.scale;
-    uint8_t compressedBytes = params.compressedBytes;
-
-    values.clear();
-    if (compressedBytes > 0) {
-        BitPacker packer;
-        for (size_t i = 0; i < params.maxRegisters; ++i) {
-            size_t offset = 3 + i * 2;
-            if ((offset + 1) >= response.length) {
-                break;
-            }
-            uint8_t high = response.data[offset];
-            uint8_t low  = response.data[offset + 1];
-            uint16_t raw = (static_cast<uint16_t>(high) << 8) | low;
-            packer.push(raw, compressedBytes, values);
-        }
-        packer.flush(values);
-    } else {
-        for (size_t i = 0; i < params.maxRegisters; ++i) {
-            size_t offset = 3 + i * 2;
-            if ((offset + 1) >= response.length) {
-                break;
-            }
-            uint8_t high = response.data[offset];
-            uint8_t low  = response.data[offset + 1];
-
-            if (dataType == 1) {            // uint8 -> solo byte bajo
-                values.push_back(low);
-            } else if (dataType == 2) {     // uint16 -> alto seguido del bajo
-                values.push_back(high);
-                values.push_back(low);
-            } else {                        // por defecto mantener big-endian
-                values.push_back(high);
-                values.push_back(low);
-            }
-        }
-    }
-    // TODO: decodificar según params.dataType, aplicar escala, manejar compresión si params.dataType == 3
-    // TODO: encolar payload formateado para LoRa
-
-    return true;
-}
-
-/**
  * @def MAX_SENSOR_PAYLOAD
  * @brief Maximum size of an individual sensor payload.
  * @ingroup group_data_format
@@ -747,96 +434,108 @@ struct SensorDataPayload {
 QueueHandle_t queueSensorDataPayload; ///< Queue for processed sensor payloads.
 
 /**
- * @brief Data Formatter task.
- * @details Consumes responses from `queueRespuestas`, processes them according to their type (Discovery or Sampling)
- * and enqueues the formatted results.
+ * @brief Extracts and formats data from a sampling Modbus response.
+ * @param response Raw response received.
+ * @param request Information from the original request.
+ * @param values Output vector where the processed bytes will be stored.
+ * @return true if the process was successful.
  * @ingroup group_data_format
  */
-void DataFormatter (void *pvParameters) {
-    while (true) {
-        ResponseFormat response;
-        // Esperar indefinidamente por una respuesta en la cola
-        if (xQueueReceive(queueRespuestas, &response, portMAX_DELAY) == pdTRUE) {
-            
-            // Usar el token de la respuesta para encontrar la solicitud original
-            ModbusRequestInfo* request = findRequestByToken(response.order);
+static bool formatAndEnqueueSensorData(const ModbusApiResult& response, uint8_t slaveId, uint8_t sensorId) {
+    auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
+        [&](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
+    if (slaveIt == slaveList.end()) {
+        Serial.printf("Formato: no se encontró el esclavo %u.\n", slaveId);
+        return false;
+    }
 
-            if (request && request->token != 0) {
-                Serial.printf("Respuesta recibida para Token %u (Esclavo %u)\n", request->token, request->slaveId);
-                
-                /*
-                // IMPRIMIR DATA RAW EN DECIMAL (SECCIÓN DE DEPURACIÓN COMENTADA)
-                Serial.println("=== DATA RAW RECIBIDA ===");  
-                Serial.printf("Esclavo: %u, Longitud: %u bytes\n", response.deviceId, response.length);
-                Serial.print("Data (decimal): ");
-                for (size_t i = 0; i < response.length; i++) {
-                    Serial.print(response.data[i]);
-                    if (i < response.length - 1) Serial.print(", ");
-                }
-                Serial.println();
-                
-                // También mostrar los registros Modbus decodificados si es muestreo
-                if (request->type == REQUEST_SAMPLING && response.length >= 5) {
-                    Serial.print("Registros Modbus (decimal): ");
-                    for (size_t i = 3; i < response.length; i += 2) {
-                        if ((i + 1) < response.length) {
-                            uint16_t reg = (response.data[i] << 8) | response.data[i + 1];
-                            Serial.print(reg);
-                            if ((i + 2) < response.length) Serial.print(", ");
-                        }
-                    }
-                    Serial.println();
-                }
-                Serial.println("=========================");
-                */
-                
-                std::vector<uint8_t> values;
-                // Diferenciar el tratamiento según el tipo de solicitud
-                switch (request->type) {
-                    case REQUEST_DISCOVERY:
-                        Serial.println("-> Procesando respuesta de DESCUBRIMIENTO.");
-                        parseAndStoreDiscoveryResponse(response, request->slaveId);
-                        //initScheduler(); // Re-inicializar el scheduler con la nueva lista de sensores
-                        break;
+    auto sensorIt = std::find_if(slaveIt->sensors.begin(), slaveIt->sensors.end(),
+        [&](const ModbusSensorParam& sensor) { return sensor.sensorID == sensorId; });
+    if (sensorIt == slaveIt->sensors.end()) {
+        Serial.printf("Formato: no se encontró el sensor %u en esclavo %u.\n", sensorId, slaveId);
+        return false;
+    }
 
-                    case REQUEST_SAMPLING:
-                        Serial.println("-> Procesando respuesta de MUESTREO de datos.");
-                        
-                        if (!formatAndEnqueueSensorData(response, *request, values)) {
-                            Serial.println("Formato: fallo al procesar datos de muestreo.");
-                        }
-                        else {
-                            // Encolar el payload formateado
-                            SensorDataPayload payload;
-                            payload.slaveId = request->slaveId;
-                            payload.sensorId = request->sensorId;
+    const ModbusSensorParam& params = *sensorIt;
+    std::vector<uint8_t> values;
 
-                            // Copiar los datos de forma segura
-                            payload.dataSize = std::min(values.size(), (size_t)MAX_SENSOR_PAYLOAD);
-                            memcpy(payload.data, values.data(), payload.dataSize);
+    Serial.printf("Formato: esclavo %u sensor %u -> regs:%u tipo:%u escala:%u comp:%u\n",
+                  slaveId, params.sensorID, params.maxRegisters,
+                  params.dataType, params.scale, params.compressedBytes);
 
-                            if (xQueueSend(queueSensorDataPayload, &payload, pdMS_TO_TICKS(10)) != pdTRUE) {
-                                Serial.println("Error: No se pudo encolar el payload de datos del sensor.");
-                            } else {
-                                Serial.printf("Payload de datos del sensor encolado: Esclavo %u, Sensor %u, Bytes %u\n",
-                                              payload.slaveId, payload.sensorId, payload.dataSize);
-                            }
-                        }
-                        break;
+    // --- INICIO: Bloque de depuración para imprimir bytes HIGH y LOW ---
+    Serial.print("  [Debug] Bytes HIGH/LOW recibidos: ");
+    // Los datos de la API ya no tienen cabecera Modbus
+    for (size_t i = 0; i < params.maxRegisters; ++i) {
+        size_t offset = i * 2;
+        if ((offset + 1) < response.data_len) {
+            uint8_t high = response.data[offset];
+            uint8_t low  = response.data[offset + 1];
+            Serial.printf("[H:%u, L:%u] ", high, low);
+        } else {
+            break; // Salir si no hay suficientes datos para un par completo
+        }
+    }
+    Serial.println();
+    // --- FIN: Bloque de depuración ---
 
-                    default:
-                        Serial.printf("Tipo de solicitud desconocido para Token %u\n", request->token);
-                        break;
-                }
+    uint8_t dataType = params.dataType; // 1=uint8, 2=uint16
+    uint8_t scale = params.scale;
+    uint8_t compressedBytes = params.compressedBytes;
 
-                // Invalidar el token para que no se procese de nuevo (importante si hay reintentos o errores)
-                request->token = 0;
+    values.clear();
+    if (compressedBytes > 0) {
+        BitPacker packer;
+        for (size_t i = 0; i < params.maxRegisters; ++i) {
+            size_t offset = i * 2;
+            if ((offset + 1) >= response.data_len) {
+                break;
+            }
+            uint8_t high = response.data[offset];
+            uint8_t low  = response.data[offset + 1];
+            uint16_t raw = (static_cast<uint16_t>(high) << 8) | low;
+            packer.push(raw, compressedBytes, values);
+        }
+        packer.flush(values);
+    } else {
+        for (size_t i = 0; i < params.maxRegisters; ++i) {
+            size_t offset = i * 2;
+            if ((offset + 1) >= response.data_len) {
+                break;
+            }
+            uint8_t high = response.data[offset];
+            uint8_t low  = response.data[offset + 1];
 
-            } else {
-                Serial.printf("No se encontró información de solicitud para el token %u, o ya fue procesado.\n", response.order);
+            if (dataType == 1) {            // uint8 -> solo byte bajo
+                values.push_back(low);
+            } else if (dataType == 2) {     // uint16 -> alto seguido del bajo
+                values.push_back(high);
+                values.push_back(low);
+            } else {                        // por defecto mantener big-endian
+                values.push_back(high);
+                values.push_back(low);
             }
         }
     }
+    
+    // Encolar el payload formateado
+    SensorDataPayload payload;
+    payload.slaveId = slaveId;
+    payload.sensorId = sensorId;
+
+    // Copiar los datos de forma segura
+    payload.dataSize = std::min(values.size(), (size_t)MAX_SENSOR_PAYLOAD);
+    memcpy(payload.data, values.data(), payload.dataSize);
+
+    if (xQueueSend(queueSensorDataPayload, &payload, pdMS_TO_TICKS(10)) != pdTRUE) {
+        Serial.println("Error: No se pudo encolar el payload de datos del sensor.");
+        return false;
+    } else {
+        Serial.printf("Payload de datos del sensor encolado: Esclavo %u, Sensor %u, Bytes %u\n",
+                      payload.slaveId, payload.sensorId, payload.dataSize);
+    }
+
+    return true;
 }
 
 /**
@@ -939,7 +638,6 @@ std::vector<uint8_t> construirPayloadUnificado(
     // ================== 4. DATA LENGTH BYTES (N bytes) ==================
     // Se añade un byte de longitud por CADA bit activo en activate_byte,
     // en el orden LSB a MSB (Batería, Voltaje, Corriente, Externos...).
-
 
     // --- Batería (Bit 0) ---
     if (activate_byte & (1 << 0)) {
@@ -1082,8 +780,6 @@ struct Fragmento {
     size_t len;                     ///< Length of the data.
 };
 
-QueueHandle_t queueFragmentos;          ///< Queue for binary LoRa messages.
-SemaphoreHandle_t semaforoEnvioCompleto; ///< Semaphore to synchronize the end of a sending cycle.
 
 // ==================== LORA CALLBACKS ====================
 /**
@@ -1235,28 +931,25 @@ void setup() {
     // Inicialización SPI
     SPI.begin();
 
-    RTUutils::prepareHardwareSerial(Serial2);
-    Serial2.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN);
-
-    // Configurar el cliente Modbus
-    MB.onDataHandler(&handleData);      // Asignar callback para datos
-    MB.onErrorHandler(&handleError);    // Asignar callback para errores
-    MB.setTimeout(2000);                // Timeout de 2 segundos por petición
-    MB.begin(Serial2);                  // Iniciar cliente (la tarea de fondo se inicia aquí)
+    // Inicializar la API Modbus síncrona
+    modbus_api_init(Serial2, RX_PIN, TX_PIN);
 
     // Crear colas y semáforos
     schedulerMutex = xSemaphoreCreateMutex();
-    queueEventos_Peripheral = xQueueCreate(10, sizeof(EventManagerFormat));
-    queueEventos_Scheduler = xQueueCreate(10, sizeof(EventManagerFormat));
-    queueRespuestas = xQueueCreate(10, sizeof(ResponseFormat));
+    // YA NO SON NECESARIAS
+    // queueEventos_Peripheral = xQueueCreate(10, sizeof(EventManagerFormat));
+    // queueEventos_Scheduler = xQueueCreate(10, sizeof(EventManagerFormat));
+    // queueRespuestas = xQueueCreate(10, sizeof(ResponseFormat));
 
-    // ⬇️ 1. LÍNEA FALTANTE (AHORA CORREGIDA CON EL TAMAÑO FIJO)
     queueSensorDataPayload = xQueueCreate(10, sizeof(SensorDataPayload));
 
-    xTaskCreatePinnedToCore(EventManager, "EventManager", 4096, NULL, 4, NULL, 0);
+    // YA NO ES NECESARIA
+    // xTaskCreatePinnedToCore(EventManager, "EventManager", 4096, NULL, 4, NULL, 0);
+    
     xTaskCreatePinnedToCore(DataRequestScheduler, "Scheduler", 4096, NULL, 3, NULL, 0);
 
-    xTaskCreatePinnedToCore(DataFormatter, "DataFormatter", 4096, NULL, 2, NULL, 0);
+    // YA NO ES NECESARIA
+    // xTaskCreatePinnedToCore(DataFormatter, "DataFormatter", 4096, NULL, 2, NULL, 0);
 
     //xTaskCreatePinnedToCore(DataPrinterTask, "DataPrinter", 4096, NULL, 2, NULL, 0);
 
