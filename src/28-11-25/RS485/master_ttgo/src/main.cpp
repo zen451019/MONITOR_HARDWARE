@@ -1010,6 +1010,52 @@ void loop() {
 // ==================== CONTROL FUNCTIONS ====================
 
 /**
+ * @brief Función interna para añadir las tareas de un esclavo al planificador.
+ * @warning ESTA FUNCIÓN DEBE SER LLAMADA ÚNICAMENTE MIENTRAS SE POSEE EL 'schedulerMutex'.
+ * @param slave El esclavo cuyas tareas de sensor se añadirán.
+ */
+void _internal_addSlaveToScheduler(const ModbusSlaveParam& slave) {
+    for (const auto& sensor : slave.sensors) {
+        uint32_t calculatedInterval = sensor.samplingInterval;
+        if (sensor.numberOfChannels > 0 && sensor.maxRegisters > 0) {
+            uint16_t registersPerChannel = sensor.maxRegisters / sensor.numberOfChannels;
+            calculatedInterval = (uint32_t)sensor.samplingInterval * registersPerChannel;
+        }
+
+        scheduleList.push_back({
+            slave.slaveID,
+            sensor.sensorID,
+            (uint16_t)calculatedInterval,
+            millis() // Muestreo inmediato para el nuevo sensor
+        });
+        Serial.printf("  [Control] Tarea para SensorID %u añadida al planificador.\n", sensor.sensorID);
+    }
+}
+
+bool _internal_removeSlave(uint8_t slaveId) {
+    // 1. Eliminar el esclavo de slaveList
+    auto slaveIt = std::remove_if(slaveList.begin(), slaveList.end(), 
+        [slaveId](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
+
+    if (slaveIt == slaveList.end()) {
+        // El esclavo no fue encontrado
+        return false;
+    }
+    
+    slaveList.erase(slaveIt, slaveList.end());
+    Serial.printf("[Control] Esclavo %u eliminado de slaveList.\n", slaveId);
+
+    // 2. Eliminar las entradas correspondientes de scheduleList
+    auto scheduleIt = std::remove_if(scheduleList.begin(), scheduleList.end(),
+        [slaveId](const SensorSchedule& item) { return item.slaveID == slaveId; });
+    
+    scheduleList.erase(scheduleIt, scheduleList.end());
+    Serial.printf("[Control] Tareas del esclavo %u eliminadas del planificador.\n", slaveId);
+
+    return true;
+}
+
+/**
  * @brief Pausa la ejecución de la tarea DataRequestScheduler.
  * @details Utiliza el handle de la tarea para suspenderla. Es seguro llamarla múltiples veces.
  */
@@ -1042,19 +1088,24 @@ void resumeScheduler() {
 bool registerSlave(uint8_t slaveId) {
     Serial.printf("[Control] Intentando registrar esclavo con ID %u...\n", slaveId);
 
-    // La función discoverDeviceSensors ya intenta la comunicación y, si tiene éxito,
-    // llama a parseAndStoreDiscoveryResponse, que actualiza la slaveList.
     bool success = discoverDeviceSensors(slaveId);
 
     if (success) {
-        Serial.printf("[Control] Esclavo %u respondió y fue registrado exitosamente.\n", slaveId);
+        Serial.printf("[Control] Esclavo %u respondió. Actualizando planificador...\n", slaveId);
         
-        // Reconstruir la lista de planificación para incluir el nuevo esclavo.
-        Serial.println("[Control] Reconstruyendo el planificador...");
-        initScheduler();
+        if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
+            // Encontrar el esclavo que acabamos de añadir a slaveList
+            auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
+                [&](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
+
+            if (slaveIt != slaveList.end()) {
+                _internal_addSlaveToScheduler(*slaveIt);
+            }
+            xSemaphoreGive(schedulerMutex);
+        }
         
     } else {
-        Serial.printf("[Control] FALLO: El esclavo %u no respondió a la solicitud de descubrimiento.\n", slaveId);
+        Serial.printf("[Control] FALLO: El esclavo %u no respondió.\n", slaveId);
     }
 
     return success;
@@ -1066,22 +1117,9 @@ bool registerSlave(uint8_t slaveId) {
  */
 void unregisterSlave(uint8_t slaveId) {
     if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
-        auto it = std::remove_if(slaveList.begin(), slaveList.end(), 
-            [slaveId](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
-
-        if (it != slaveList.end()) {
-            slaveList.erase(it, slaveList.end());
-            Serial.printf("[Control] Esclavo %u eliminado.\n", slaveId);
-            
-            // Liberar el mutex antes de llamar a initScheduler
-            xSemaphoreGive(schedulerMutex);
-
-            // Reconstruir la lista de planificación
-            Serial.println("[Control] Reconstruyendo el planificador...");
-            initScheduler();
-        } else {
+        if (!_internal_removeSlave(slaveId)) {
             Serial.printf("[Control] No se encontró el esclavo %u para eliminar.\n", slaveId);
-            xSemaphoreGive(schedulerMutex);
         }
+        xSemaphoreGive(schedulerMutex);
     }
 }
