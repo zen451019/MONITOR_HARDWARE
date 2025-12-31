@@ -92,6 +92,7 @@ struct SensorSchedule {
 
 std::vector<SensorSchedule> scheduleList; ///< Master scheduling list.
 SemaphoreHandle_t schedulerMutex;         ///< Mutex to protect concurrent access to scheduleList;
+TaskHandle_t dataRequestSchedulerHandle = NULL; ///< Handle para la tarea del planificador.
 
 /**
  * @brief Initializes or updates the scheduling list (Scheduler).
@@ -176,18 +177,7 @@ bool handleScheduledSensor(const SensorSchedule& item) {
     return true; // El esclavo sigue activo.
 }
 
-
 std::vector<uint8_t> dispositivosAConsultar = {1, 2, 3}; ///< Predefined list of Modbus IDs to scan at startup.
-
-/**
- * @struct EventManagerFormat
- * @brief Message structure for internal event communication.
- */
-struct EventManagerFormat {
-    uint8_t slaveId;    ///< Slave ID.
-    uint8_t sensorID;   ///< Sensor ID (0 for general commands).
-    uint16_t order;     ///< Order type or auxiliary parameter.
-};
 
 /**
  * @brief One-shot task for the initial discovery of sensors.
@@ -216,57 +206,74 @@ void initialDiscoveryTask(void *pvParameters) {
 
 
 /**
+ * @brief Comparación segura con wrap-around de millis().
+ */
+static inline bool timeReached(uint32_t now, uint32_t target) {
+    return static_cast<int32_t>(now - target) >= 0;
+}
+
+/**
  * @brief Main task of the Scheduler.
  * @details Periodically checks which sensors should be sampled and generates events for the EventManager.
  * @ingroup group_modbus_discovery
  */
 void DataRequestScheduler(void *pvParameters) {
-    // Initialization is now done from the discovery task
-    // initScheduler(); 
 
     while (true) {
-        uint32_t now = millis();
-        TickType_t sleepTime = pdMS_TO_TICKS(1000); // Por defecto, esperar 1s si no hay nada que hacer
+        const uint32_t now = millis();
+        TickType_t sleepTime = pdMS_TO_TICKS(1000); // Default si no hay nada
+        bool schedulerNeedsRebuild = false;
+
+        // 1) Bajo mutex: seleccionar "due", reprogramar y calcular próximo evento.
+        std::vector<SensorSchedule> dueItems;
+        uint32_t nextEventTime = UINT32_MAX;
 
         if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
-            
+
             if (!scheduleList.empty()) {
-                uint32_t nextEventTime = UINT32_MAX;
-                bool schedulerNeedsRebuild = false;
+                dueItems.reserve(scheduleList.size());
 
                 for (auto& item : scheduleList) {
-                    if (now >= item.nextSampleTime) {
-                        // Es hora de muestrear. Llama a la nueva función.
-                        if (!handleScheduledSensor(item)) {
-                            // El esclavo fue eliminado, necesitamos reconstruir el planificador.
-                            schedulerNeedsRebuild = true;
-                            break; // Salir del bucle para reconstruir.
-                        }
-                        
-                        // Actualizar el próximo tiempo de muestreo
+                    if (timeReached(now, item.nextSampleTime)) {
+                        // Copia del trabajo a ejecutar fuera del mutex
+                        dueItems.push_back(item);
+
+                        // Reprogramar inmediatamente (sin hacer I/O aquí)
                         item.nextSampleTime = now + item.samplingInterval;
                     }
-                    // Buscar el próximo evento más cercano en el futuro
+
                     if (item.nextSampleTime < nextEventTime) {
                         nextEventTime = item.nextSampleTime;
                     }
                 }
 
-                if (schedulerNeedsRebuild) {
-                    initScheduler(); // Reconstruye la lista de planificación.
+                // Calcular cuánto dormir hasta el próximo evento
+                const uint32_t now2 = millis();
+                if (nextEventTime != UINT32_MAX && nextEventTime > now2) {
+                    sleepTime = pdMS_TO_TICKS(nextEventTime - now2);
+                } else if (!dueItems.empty()) {
+                    // Si hubo trabajo "due", cede un poco para no saturar
+                    sleepTime = pdMS_TO_TICKS(10);  
                 } else {
-                    // Calcular cuánto dormir hasta el próximo evento
-                    now = millis(); // Actualizar 'now' por si el bucle tardó mucho
-                    if (nextEventTime > now) {
-                        sleepTime = pdMS_TO_TICKS(nextEventTime - now);
-                    } else {
-                        // Si todos los eventos ya pasaron, hacer una pequeña pausa para no saturar
-                        sleepTime = pdMS_TO_TICKS(10); 
-                    }
+                    sleepTime = pdMS_TO_TICKS(1000);
                 }
             }
-            
+
             xSemaphoreGive(schedulerMutex);
+        }
+
+        // 2) Fuera del mutex: ejecutar I/O (Modbus). Si algún esclavo cae, marcar rebuild.
+        for (const auto& item : dueItems) {
+            if (!handleScheduledSensor(item)) {
+                schedulerNeedsRebuild = true;
+                // No hace falta seguir: scheduleList quedó desfasada respecto a slaveList.
+                break;
+            }
+        }
+
+        // 3) Rebuild fuera del mutex (evita deadlock y reduce tiempo en sección crítica)
+        if (schedulerNeedsRebuild) {
+            initScheduler();
         }
 
         vTaskDelay(sleepTime);
@@ -970,7 +977,7 @@ void setup() {
 
     queueSensorDataPayload = xQueueCreate(10, sizeof(SensorDataPayload));
     
-    xTaskCreatePinnedToCore(DataRequestScheduler, "Scheduler", 4096, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(DataRequestScheduler, "Scheduler", 4096, NULL, 3, &dataRequestSchedulerHandle, 0);
 
     // --- INICIAR DESCUBRIMIENTO ---
     // Creamos una tarea solo para el descubrimiento. Se ejecutará una vez y se borrará.
@@ -998,4 +1005,83 @@ void loop() {
     // The main loop can be left empty or used for low-priority tasks.
     // It's better that the loop task is not deleted and simply yields control.
     vTaskDelay(pdMS_TO_TICKS(1000));
+}
+
+// ==================== CONTROL FUNCTIONS ====================
+
+/**
+ * @brief Pausa la ejecución de la tarea DataRequestScheduler.
+ * @details Utiliza el handle de la tarea para suspenderla. Es seguro llamarla múltiples veces.
+ */
+void pauseScheduler() {
+    if (dataRequestSchedulerHandle != NULL) {
+        vTaskSuspend(dataRequestSchedulerHandle);
+        Serial.println("[Control] Planificador pausado.");
+    }
+}
+
+/**
+ * @brief Reanuda la ejecución de la tarea DataRequestScheduler.
+ * @details Utiliza el handle de la tarea para reanudarla si estaba suspendida.
+ */
+void resumeScheduler() {
+    if (dataRequestSchedulerHandle != NULL) {
+        vTaskResume(dataRequestSchedulerHandle);
+        Serial.println("[Control] Planificador reanudado.");
+    }
+}
+
+/**
+ * @brief Intenta descubrir y registrar un nuevo esclavo dinámicamente.
+ * @details Realiza una consulta de descubrimiento al ID del esclavo. Si tiene éxito,
+ *          el esclavo se añade a la lista global y se reconstruye el planificador.
+ *          La función es segura para ser llamada en cualquier momento.
+ * @param slaveId El ID del esclavo a descubrir y registrar.
+ * @return true si el esclavo respondió y fue registrado, false en caso contrario.
+ */
+bool registerSlave(uint8_t slaveId) {
+    Serial.printf("[Control] Intentando registrar esclavo con ID %u...\n", slaveId);
+
+    // La función discoverDeviceSensors ya intenta la comunicación y, si tiene éxito,
+    // llama a parseAndStoreDiscoveryResponse, que actualiza la slaveList.
+    bool success = discoverDeviceSensors(slaveId);
+
+    if (success) {
+        Serial.printf("[Control] Esclavo %u respondió y fue registrado exitosamente.\n", slaveId);
+        
+        // Reconstruir la lista de planificación para incluir el nuevo esclavo.
+        Serial.println("[Control] Reconstruyendo el planificador...");
+        initScheduler();
+        
+    } else {
+        Serial.printf("[Control] FALLO: El esclavo %u no respondió a la solicitud de descubrimiento.\n", slaveId);
+    }
+
+    return success;
+}
+
+/**
+ * @brief Elimina un esclavo de la lista y actualiza el planificador.
+ * @param slaveId El ID del esclavo a eliminar.
+ */
+void unregisterSlave(uint8_t slaveId) {
+    if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
+        auto it = std::remove_if(slaveList.begin(), slaveList.end(), 
+            [slaveId](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
+
+        if (it != slaveList.end()) {
+            slaveList.erase(it, slaveList.end());
+            Serial.printf("[Control] Esclavo %u eliminado.\n", slaveId);
+            
+            // Liberar el mutex antes de llamar a initScheduler
+            xSemaphoreGive(schedulerMutex);
+
+            // Reconstruir la lista de planificación
+            Serial.println("[Control] Reconstruyendo el planificador...");
+            initScheduler();
+        } else {
+            Serial.printf("[Control] No se encontró el esclavo %u para eliminar.\n", slaveId);
+            xSemaphoreGive(schedulerMutex);
+        }
+    }
 }
