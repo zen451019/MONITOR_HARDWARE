@@ -140,11 +140,23 @@ ModbusApiResult modbus_api_read_registers(uint8_t slave_id, uint8_t function_cod
     // 4. Esperar a que el semáforo sea "liberado" por el callback (o que se agote el tiempo).
     if (xSemaphoreTake(completion_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
         // El callback fue ejecutado. Recibimos el resultado de la cola.
-        xQueueReceive(queueApiResponses, &result, 0);
+        // Usamos un pequeño timeout para asegurar que el dato esté disponible si el semáforo ya fue dado.
+        if (xQueueReceive(queueApiResponses, &result, pdMS_TO_TICKS(10)) != pdTRUE) {
+            // Esto sería muy raro: el semáforo se liberó pero no hay nada en la cola.
+            // Indica un error de lógica interna.
+            result.error_code = ModbusApiError::ERROR_INTERNAL;
+            result.data_len = 0;
+        }
     } else {
         // Se agotó el tiempo de espera de la API.
         result.error_code = ModbusApiError::ERROR_TIMEOUT;
         result.data_len = 0;
+
+        // IMPORTANTE: Intentar purgar la respuesta tardía para evitar desincronización.
+        // Si la respuesta llega justo después del timeout, el callback la pondrá en la cola.
+        // La leemos aquí para descartarla y evitar que la siguiente llamada la consuma por error.
+        ModbusApiResult discarded_result;
+        xQueueReceive(queueApiResponses, &discarded_result, 0); // No bloquear, solo comprobar.
     }
 
     // 5. Limpiar y devolver.

@@ -14,6 +14,31 @@
 #include "HardwareSerial.h"
 #include "ModbusServerRTU.h"
 
+// =================================================================
+// --- DEBUG / LOGGING ---
+// =================================================================
+
+// 0 = off, 1 = on
+#define LOG_RMS 0
+#define LOG_MODBUS_REG_UPDATE 0
+#define LOG_LOOP 0
+#define LOG_MODBUS_FRAMES 1
+
+static void printHexBytes(const uint8_t *data, size_t len) {
+    for (size_t i = 0; i < len; ++i) {
+        Serial.printf("%02X", data[i]);
+        if (i + 1 < len) Serial.print(' ');
+    }
+}
+
+static void logModbusMessageHex(const char *tag, const ModbusMessage &msg) {
+    ModbusMessage &nonConstMsg = const_cast<ModbusMessage &>(msg);
+    Serial.printf("[MODBUS] %s len=%u : ", tag, (unsigned)nonConstMsg.size());
+    const uint8_t *p = (const uint8_t *)nonConstMsg.data();
+    printHexBytes(p, nonConstMsg.size());
+    Serial.println();
+}
+
 /**
  * @brief Serial port instance for Modbus RS485 communication.
  * @ingroup group_modbus
@@ -298,6 +323,8 @@ void task_adquisicion(void *pvParameters) {
 void task_procesamiento(void *pvParameters) {
     ADC_Sample sample;
     TickType_t last_process_time = xTaskGetTickCount();
+    const int samples_per_channel = NUM_REGISTERS / NUM_CHANNELS;
+
     while (true) {
         while (xQueueReceive(queue_adc_samples, &sample, 0) == pdTRUE) {
             if (sample.channel < NUM_CHANNELS) {
@@ -313,9 +340,12 @@ void task_procesamiento(void *pvParameters) {
                 fifo.head = (fifo.head + 1) % FIFO_SIZE;
             }
         }
+        
         if (xTaskGetTickCount() - last_process_time >= pdMS_TO_TICKS(PROCESS_INTERVAL_MS)) {
             last_process_time = xTaskGetTickCount();
             float calculated_rms[NUM_CHANNELS] = {0};
+            
+            // --- PARTE A: CALCULAR Y GUARDAR HISTORIAL ---
             if (xSemaphoreTake(rms_history_mutex, portMAX_DELAY) == pdTRUE) {
                 for (int i = 0; i < NUM_CHANNELS; i++) {
                     if (fifos[i].count > 0) {
@@ -327,8 +357,41 @@ void task_procesamiento(void *pvParameters) {
                 rms_history_ch0[rms_history_head] = calculated_rms[0];
                 rms_history_ch1[rms_history_head] = calculated_rms[1];
                 rms_history_ch2[rms_history_head] = calculated_rms[2];
+                
+                #if LOG_RMS
+                Serial.printf("[RMS] T=%lu head=%d CH0=%.1f CH1=%.1f CH2=%.1f\n",
+                              millis(), rms_history_head,
+                              calculated_rms[0], calculated_rms[1], calculated_rms[2]);
+                #endif
+                
                 rms_history_head = (rms_history_head + 1) % RMS_HISTORY_SIZE;
                 xSemaphoreGive(rms_history_mutex);
+            }
+
+            // --- PARTE B: ACTUALIZAR MODBUS ---
+            if (xSemaphoreTake(dataMutex, portMAX_DELAY) == pdTRUE) {
+                float rms_channel[NUM_CHANNELS][samples_per_channel];
+                int counts[NUM_CHANNELS];
+
+                for (int ch = 0; ch < NUM_CHANNELS; ch++) {
+                    counts[ch] = get_rms_history(ch, rms_channel[ch], samples_per_channel);
+                }
+
+                for (int ch = 0; ch < NUM_CHANNELS; ch++) {
+                    for (int i = 0; i < samples_per_channel; i++) {
+                        int idx = ch * samples_per_channel + i;
+                        float volts = rms_channel[ch][i] * CONVERSION_FACTORS[ch]; 
+                        holdingRegisters[idx] = (counts[ch] > i) ? (uint16_t)round(volts) : 0;
+                    }
+                }
+                
+                #if LOG_MODBUS_REG_UPDATE
+                Serial.printf("[MODBUS] Regs CH0: %u,%u,%u,%u,%u,%u\n",
+                              holdingRegisters[0], holdingRegisters[1], holdingRegisters[2],
+                              holdingRegisters[3], holdingRegisters[4], holdingRegisters[5]);
+                #endif
+                
+                xSemaphoreGive(dataMutex);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -452,11 +515,19 @@ SensorData sensor = {1, 3, 10, NUM_REGISTERS, PROCESS_INTERVAL_MS, 1, 1, 0};
 ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
     uint16_t address, words;
     ModbusMessage response;
-    Serial.printf("Modbus Request Received: ServerID=%d, FunctionCode=%d\n",
-                  request.getServerID(), request.getFunctionCode());
+
+    #if LOG_MODBUS_FRAMES
+    logModbusMessageHex("RX", request);
+    #endif
 
     request.get(2, address);
     request.get(4, words);
+
+    #if LOG_MODBUS_FRAMES
+    Serial.printf("[MODBUS] Req: SID=%u FC=%u addr=%u words=%u\n",
+                  (unsigned)request.getServerID(), (unsigned)request.getFunctionCode(),
+                  (unsigned)address, (unsigned)words);
+    #endif
 
     if (address == 0 && words == 8) {
         response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
@@ -468,6 +539,10 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
         response.add(sensor.dataType);
         response.add(sensor.scale);
         response.add(sensor.compressedBytes);
+
+        #if LOG_MODBUS_FRAMES
+        logModbusMessageHex("TX", response);
+        #endif
         return response;
     }
     else if (address == 10 && words == NUM_REGISTERS)
@@ -477,18 +552,40 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
             for (uint16_t i = 0; i < words; ++i) {
                 response.add((uint16_t)holdingRegisters[i]);
             }
+
+            #if LOG_MODBUS_FRAMES
+            Serial.print("[MODBUS] TX regs:");
+            for (uint16_t i = 0; i < words; ++i) {
+                Serial.printf(" %u", (unsigned)holdingRegisters[i]);
+            }
+            Serial.println();
+            logModbusMessageHex("TX", response);
+            #endif
+
             xSemaphoreGive(dataMutex);
         } else {
             response.setError(request.getServerID(), request.getFunctionCode(), SERVER_DEVICE_BUSY);
+
+            #if LOG_MODBUS_FRAMES
+            logModbusMessageHex("TX-EX", response);
+            #endif
         }
         return response;
     }
     else if (address >= NUM_REGISTERS || (address + words) > NUM_REGISTERS) {
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+
+        #if LOG_MODBUS_FRAMES
+        logModbusMessageHex("TX-EX", response);
+        #endif
         return response;
     }
     else {
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+
+        #if LOG_MODBUS_FRAMES
+        logModbusMessageHex("TX-EX", response);
+        #endif
         return response;
     }
 }
@@ -525,9 +622,12 @@ void setup() {
         while (1);
     }
 
-    pinMode(ADS_ALERT_PIN, INPUT);
+    // ALERT/RDY es open-drain: necesita pull-up
+    pinMode(ADS_ALERT_PIN, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(ADS_ALERT_PIN), on_adc_data_ready, FALLING);
-    ads.startComparator_SingleEnded(0, 1000);
+
+    // NO usar comparador por umbral si quieres "data ready"
+    // ads.startComparator_SingleEnded(0, 1000);
 
     MBserver.registerWorker(SLAVE_ID, READ_HOLD_REGISTER, &readHoldingRegistersWorker);
     MBserver.setModbusTimeout(2000);
@@ -535,7 +635,9 @@ void setup() {
     xTaskCreatePinnedToCore(task_adquisicion, "TaskAdquisicion", 4096, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(task_procesamiento, "TaskProcesamiento", 4096, NULL, 3, NULL, 0);
     MBserver.begin(ModbusSerial, 0);
-    xTaskCreatePinnedToCore(dataUpdateTask, "DataUpdateTask", 2048, NULL, 1, &dataUpdateTaskHandle, 0);
+    
+    // 3. COMENTAMOS la creación de la tarea dataUpdateTask, ya no hace falta
+    // xTaskCreatePinnedToCore(dataUpdateTask, "DataUpdateTask", 2048, NULL, 1, &dataUpdateTaskHandle, 0);
 
     Serial.println("INFO: Setup completed.");
 }
@@ -547,16 +649,18 @@ void setup() {
  * @ingroup group_hardware
  */
 void loop() {
-    vTaskDelay(pdMS_TO_TICKS(5000));
-    Serial.println("Main loop active...");
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
+    #if LOG_LOOP
+    Serial.println("Main loop active...");
     const int num_datos = 6;
     float datos_ch1[num_datos];
-    int obtenidos = get_rms_history(2, datos_ch1, num_datos);
+    int obtenidos = get_rms_history(1, datos_ch1, num_datos);
     if (obtenidos > 0) {
         Serial.printf("Last %d RMS from Channel 1 (in ADC units):\n", obtenidos);
         for (int i = 0; i < obtenidos; i++) {
             Serial.printf("  %.3f\n", datos_ch1[i]);
         }
     }
+    #endif
 }

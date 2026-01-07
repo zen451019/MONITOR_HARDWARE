@@ -134,6 +134,10 @@ void initScheduler() {
     }
 }
 
+static void flushUartRx(HardwareSerial& s) {
+    while (s.available() > 0) { (void)s.read(); }
+}
+
 /**
  * @brief Procesa una solicitud de muestreo para un sensor específico.
  * @details Realiza la lectura Modbus, formatea los datos en caso de éxito,
@@ -145,12 +149,15 @@ bool handleScheduledSensor(const SensorSchedule& item) {
     const uint8_t MAX_CONSECUTIVE_FAILS = 3;
 
     Serial.printf("Solicitando muestreo: SlaveID=%u, SensorID=%u\n", item.slaveID, item.sensorID);
-    
+
     uint16_t startAddr, numRegs;
     if (!getSensorParams(item.slaveID, item.sensorID, startAddr, numRegs)) {
         Serial.printf("Error: No se encontraron parámetros para Esclavo %u, Sensor %u.\n", item.slaveID, item.sensorID);
-        return true; // El esclavo sigue existiendo, aunque el sensor no se encontró.
+        return true;
     }
+
+    // IMPORTANTE: limpiar basura antes de una nueva transacción Modbus
+    flushUartRx(Serial2);
 
     ModbusApiResult result = modbus_api_read_registers(item.slaveID, READ_HOLD_REGISTER, startAddr, numRegs, 2000);
 
@@ -265,13 +272,19 @@ void DataRequestScheduler(void *pvParameters) {
         // 2) Fuera del mutex: ejecutar I/O (Modbus). Si algún esclavo cae, marcar rebuild.
         for (const auto& item : dueItems) {
             if (!handleScheduledSensor(item)) {
-                schedulerNeedsRebuild = true;
-                // No hace falta seguir: scheduleList quedó desfasada respecto a slaveList.
-                break;
+                if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
+                    auto scheduleIt = std::remove_if(scheduleList.begin(), scheduleList.end(),
+                        [&](const SensorSchedule& s) { return s.slaveID == item.slaveID; });
+                    scheduleList.erase(scheduleIt, scheduleList.end());
+                    Serial.printf("[Scheduler] Tareas del esclavo %u eliminadas del planificador.\n", item.slaveID);
+                    xSemaphoreGive(schedulerMutex);
+                }
+                schedulerNeedsRebuild = false; 
+                break; 
             }
         }
 
-        // 3) Rebuild fuera del mutex (evita deadlock y reduce tiempo en sección crítica)
+        // 3) Rebuild fuera del mutex (solo si es estrictamente necesario por otra razón)
         if (schedulerNeedsRebuild) {
             initScheduler();
         }
@@ -503,7 +516,6 @@ static bool formatAndEnqueueSensorData(const ModbusApiResult& response, uint8_t 
 
     // --- INICIO: Bloque de depuración para imprimir bytes HIGH y LOW ---
     Serial.print("  [Debug] Bytes HIGH/LOW recibidos: ");
-    // Los datos de la API ya no tienen cabecera Modbus
     for (size_t i = 0; i < params.maxRegisters; ++i) {
         size_t offset = i * 2;
         if ((offset + 1) < response.data_len) {
@@ -511,11 +523,24 @@ static bool formatAndEnqueueSensorData(const ModbusApiResult& response, uint8_t 
             uint8_t low  = response.data[offset + 1];
             Serial.printf("[H:%u, L:%u] ", high, low);
         } else {
-            break; // Salir si no hay suficientes datos para un par completo
+            break;
         }
     }
     Serial.println();
     // --- FIN: Bloque de depuración ---
+
+    // NUEVO: reconstruir regs uint16 y mostrar primero/último
+    if (params.compressedBytes == 0 && params.dataType == 1) {
+        const size_t nRegs = std::min((size_t)params.maxRegisters, response.data_len / 2);
+        if (nRegs > 0) {
+            auto regAt = [&](size_t i) -> uint16_t {
+                size_t off = i * 2;
+                return (uint16_t(response.data[off]) << 8) | uint16_t(response.data[off + 1]);
+            };
+            Serial.printf("  [Debug] Regs u16: first=%u last=%u (n=%u)\n",
+                          regAt(0), regAt(nRegs - 1), (unsigned)nRegs);
+        }
+    }
 
     uint8_t dataType = params.dataType; // 1=uint8, 2=uint16
     uint8_t scale = params.scale;
@@ -916,35 +941,34 @@ void DataAggregatorTask(void *pvParameters) {
     std::vector<SensorDataPayload> collectedPayloads;
     SensorDataPayload incomingPayload;
     uint8_t ID_MSG = 0x00;
-    const TickType_t aggregationCycle = pdMS_TO_TICKS(AGGREGATION_INTERVAL_MS);
+    const TickType_t gracePeriod = pdMS_TO_TICKS(200); // Grace period of 200ms to collect bursts
 
     while (true) {
-        // 1. Esperar el ciclo de agregación completo.
-        vTaskDelay(aggregationCycle);
-        Serial.printf("\n[Agregador] Ciclo de agregación iniciado. Recolectando datos de la cola...\n");
-
-        collectedPayloads.clear();
-
-        // 2. Vaciar la cola: recolectar todos los payloads que hayan llegado.
-        // Se usa un timeout de 0 para no bloquear y salir inmediatamente si la cola está vacía.
-        while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
+        // 1. Wait indefinitely for the *first* payload to arrive.
+        if (xQueueReceive(queueSensorDataPayload, &incomingPayload, portMAX_DELAY) == pdTRUE) {
+            Serial.println("\n[Agregador] Primer payload recibido. Iniciando ciclo de recolección.");
+            
+            collectedPayloads.clear();
             collectedPayloads.push_back(incomingPayload);
-            Serial.printf("[Agregador] Recolectado payload de Slave %u, Sensor %u.\n", incomingPayload.slaveId, incomingPayload.sensorId);
-        }
 
-        // 3. Si se recolectaron datos, empaquetar y enviar.
-        if (!collectedPayloads.empty()) {
+            // 2. Wait a short grace period to allow other payloads to arrive.
+            vTaskDelay(gracePeriod);
+
+            // 3. Drain the queue of any other payloads that arrived during the grace period.
+            while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
+                collectedPayloads.push_back(incomingPayload);
+                Serial.printf("[Agregador] Recolectado payload adicional de Slave %u, Sensor %u.\n", incomingPayload.slaveId, incomingPayload.sensorId);
+            }
+
+            // 4. If we have data, build and send the unified payload.
             Serial.printf("[Agregador] Recolección finalizada. Empaquetando %u payloads para LoRa.\n", collectedPayloads.size());
 
-            // Construir el payload unificado
             std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, collectedPayloads);
 
-            // Preparar el fragmento para la tarea LoRa
             Fragmento loraFragment;
             loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
             memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
 
-            // 4. Enviar el fragmento a la tarea LoRa
             if (loraFragment.len > 0) {
                 if (xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100)) == pdTRUE) {
                     Serial.printf("[Agregador] Fragmento LoRa de %u bytes enviado a la cola.\n", loraFragment.len);
@@ -952,10 +976,8 @@ void DataAggregatorTask(void *pvParameters) {
                     Serial.println("[Agregador] ERROR: No se pudo encolar el fragmento LoRa.");
                 }
             }
-        } else {
-            // Si no se recolectó nada, simplemente se informa y se espera al siguiente ciclo.
-            Serial.println("[Agregador] No se encontraron payloads en este ciclo. Esperando al siguiente.");
         }
+        // Loop immediately back to waiting for the next payload.
     }
 }
 
@@ -963,7 +985,7 @@ void DataAggregatorTask(void *pvParameters) {
 void setup() {
     Serial.begin(115200); // 115200 es más estándar y estable que 921600
     while (!Serial); // Espera a que el puerto serie esté listo
-    delay(1000);
+    delay(5000);
     Serial.println("Iniciando sistema...");
 
     // Inicialización SPI
