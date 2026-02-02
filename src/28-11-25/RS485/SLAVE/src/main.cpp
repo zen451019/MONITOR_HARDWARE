@@ -26,18 +26,18 @@ ModbusServerRTU MBserver(2000);
 // ===== CONFIGURACIÓN ADS =====
 const float CONVERSION_FACTORS[] = {0.653f, 0.679f, 1.133f};
 
-ADSConfig adsConfig = {
-    .type = ADSType::ADS1015,
-    .i2c_addr = 0x48,
-    .alert_pin = 19,
-    .gain = GAIN_TWOTHIRDS,
-    .samples_per_second = 3300,
-    .num_channels = NUM_CHANNELS,
-    .fifo_size = 320,
-    .history_size = 100,
-    .process_interval_ms = 1000,
-    .conversion_factors = CONVERSION_FACTORS
-};
+ADSConfig adsConfig(
+    ADSType::ADS1015,      // type
+    0x48,                  // i2c_addr
+    GAIN_TWOTHIRDS,        // gain
+    NUM_CHANNELS,          // num_channels
+    CONVERSION_FACTORS,    // conversion_factors
+    19,                    // alert_pin
+    3300,                  // samples_per_second
+    320,                   // fifo_size
+    100,                   // history_size
+    1000                   // process_interval_ms
+);
 
 ADSManager* adsManager = nullptr;
 
@@ -117,21 +117,19 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
 // ===== SETUP =====
 void setup() {
     Serial.begin(115200);
-    // Espera un momento para el monitor serie
     delay(1000); 
-    Serial.println("Sistema Modbus + ADSManager");
+    Serial.println("Sistema Modbus + ADSManager (Refactorizado)");
     
-    // CAMBIO: Usar pines por defecto (SDA=21, SCL=22)
-    // Simplemente llamamos a begin() vacío y luego seteamos la velocidad si queremos
     Wire.begin(); 
     Wire.setClock(400000L);
     
     adsManager = new ADSManager(adsConfig);
     if (!adsManager->begin()) {
         Serial.println("ERROR: ADS1015 no inicializado");
-        // Bucle seguro para no disparar el Watchdog
         while(1) { vTaskDelay(1000); }
     }
+    
+    Serial.println("ADS1015 inicializado correctamente");
     
     RTUutils::prepareHardwareSerial(ModbusSerial);
     ModbusSerial.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN);
@@ -143,12 +141,12 @@ void setup() {
     adsManager->startSampling();
     xTaskCreatePinnedToCore(dataUpdateTask, "ModbusUpdate", 2048, NULL, 1, NULL, 0);
     
-    Serial.println("Sistema listo");
+    Serial.println("Sistema listo - Iniciando muestreo...");
 }
 
 void loop() {
     vTaskDelay(pdMS_TO_TICKS(5000));
-    Serial.printf("CH0: %.1f | CH1: %.1f | CH2: %.1f\n",
+    Serial.printf("CH0: %.1f | CH1: %.1f | CH2: %.1f V\n",
                   adsManager->getLatestRMS(0),
                   adsManager->getLatestRMS(1),
                   adsManager->getLatestRMS(2));

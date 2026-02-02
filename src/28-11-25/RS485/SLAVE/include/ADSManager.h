@@ -1,37 +1,44 @@
 #ifndef ADS_MANAGER_H
 #define ADS_MANAGER_H
 
-#include <Adafruit_ADS1X15.h>
-#include <Arduino.h>
-#include <freertos/FreeRTOS.h>
+#include "ADSBase.h"
 #include <freertos/task.h>
 #include <freertos/queue.h>
-#include <freertos/semphr.h>
 
-// Enum para seleccionar el tipo de ADC
-enum class ADSType { ADS1015, ADS1115 };
-
-// Estructura para la configuración del ADC
-struct ADSConfig {
-    ADSType type;
-    uint8_t i2c_addr;
+// ===== CONFIGURACIÓN EXTENDIDA (hereda de ADSBaseConfig) =====
+struct ADSConfig : public ADSBaseConfig {
     int alert_pin;
-    adsGain_t gain;
     int samples_per_second;
-    int num_channels;
     int fifo_size;
     int history_size;
     int process_interval_ms;
-    const float* conversion_factors;
+    
+    // ← AGREGAR: Constructor para facilitar la inicialización
+    ADSConfig(ADSType t, uint8_t addr, adsGain_t g, int ch, const float* factors,
+              int alert, int sps, int fifo, int hist, int interval)
+        : ADSBaseConfig{t, addr, g, ch, factors},  // Inicializar clase base
+          alert_pin(alert),
+          samples_per_second(sps),
+          fifo_size(fifo),
+          history_size(hist),
+          process_interval_ms(interval) {}
+    
+    ADSConfig() 
+        : ADSBaseConfig{ADSType::ADS1015, 0x48, GAIN_TWOTHIRDS, 0, nullptr},
+          alert_pin(-1),
+          samples_per_second(0),
+          fifo_size(0),
+          history_size(0),
+          process_interval_ms(0) {}
 };
 
-// Estructura para una muestra leída
+// Estructura para una muestra leída (sin cambios)
 struct ADCSample {
     int16_t value;
     uint8_t channel;
 };
 
-// Estructura para el buffer RMS
+// Estructura para el buffer RMS (sin cambios)
 struct RMS_FIFO {
     int16_t* buffer;
     int head;
@@ -40,23 +47,23 @@ struct RMS_FIFO {
     int64_t sum_x2;
 };
 
-class ADSManager {
+// ===== CLASE HIJA (hereda de ADSBase) =====
+class ADSManager : public ADSBase {
 private:
     ADSConfig config;
-    Adafruit_ADS1X15* ads;
     
-    // Adquisición
+    // Adquisición (sin cambios)
     QueueHandle_t sample_queue;
     volatile bool data_ready;
     volatile uint8_t current_channel;
     
-    // Procesamiento RMS
+    // Procesamiento RMS (sin cambios)
     RMS_FIFO* fifos;
     float** rms_histories;
     volatile int rms_history_head;
     SemaphoreHandle_t rms_mutex;
     
-    // Tareas
+    // Tareas (sin cambios)
     TaskHandle_t acquisition_task_handle;
     TaskHandle_t processing_task_handle;
     
@@ -70,10 +77,10 @@ public:
     ADSManager(const ADSConfig& config);
     ~ADSManager();
     
-    bool begin();
-    void startSampling();
+    bool begin() override;
+    void startSampling() override;
     
-    // API para obtener datos procesados
+    // API para obtener datos procesados (sin cambios)
     int getRMSHistory(int channel, float* output_buffer, int count);
     float getLatestRMS(int channel);
     void getRMSAllChannels(float* output_array);

@@ -1,13 +1,14 @@
 #include "ADSManager.h"
 
-ADSManager::ADSManager(const ADSConfig& cfg) : config(cfg), data_ready(false), current_channel(0) {
-    if (config.type == ADSType::ADS1015) {
-        ads = new Adafruit_ADS1015();
-    } else {
-        ads = new Adafruit_ADS1115();
-    }
+// ===== CONSTRUCTOR =====
+ADSManager::ADSManager(const ADSConfig& cfg) 
+    // ← CAMBIO: Llamar al constructor de ADSBase primero
+    : ADSBase({cfg.type, cfg.i2c_addr, cfg.gain, cfg.num_channels, cfg.conversion_factors}),
+      config(cfg),  // Guardar config completo
+      data_ready(false), 
+      current_channel(0) {
     
-    // Crear FIFOs
+    // Crear FIFOs (sin cambios)
     fifos = new RMS_FIFO[config.num_channels];
     for (int i = 0; i < config.num_channels; i++) {
         fifos[i].buffer = new int16_t[config.fifo_size];
@@ -28,6 +29,7 @@ ADSManager::ADSManager(const ADSConfig& cfg) : config(cfg), data_ready(false), c
     rms_mutex = xSemaphoreCreateMutex();
 }
 
+// ===== DESTRUCTOR =====
 ADSManager::~ADSManager() {
     for (int i = 0; i < config.num_channels; i++) {
         delete[] fifos[i].buffer;
@@ -35,22 +37,22 @@ ADSManager::~ADSManager() {
     }
     delete[] fifos;
     delete[] rms_histories;
-    delete ads;
+    
     vQueueDelete(sample_queue);
     vSemaphoreDelete(rms_mutex);
 }
 
+// ===== ISR =====
 void IRAM_ATTR ADSManager::isr_handler(void* arg) {
     ADSManager* instance = static_cast<ADSManager*>(arg);
     instance->data_ready = true;
 }
 
+// ===== BEGIN =====
 bool ADSManager::begin() {
-    if (!ads->begin(config.i2c_addr)) {
+    if (!initADS()) {
         return false;
     }
-    
-    ads->setGain(config.gain);
     
     if (config.type == ADSType::ADS1015) {
         ads->setDataRate(RATE_ADS1015_3300SPS);
@@ -113,7 +115,6 @@ void ADSManager::processing_task_body() {
     TickType_t last_process_time = xTaskGetTickCount();
     
     while (true) {
-        // Consumir muestras de la cola
         while (xQueueReceive(sample_queue, &sample, 0) == pdTRUE) {
             if (sample.channel < config.num_channels) {
                 RMS_FIFO& fifo = fifos[sample.channel];
@@ -133,7 +134,6 @@ void ADSManager::processing_task_body() {
             }
         }
         
-        // Calcular RMS periódicamente
         if (xTaskGetTickCount() - last_process_time >= pdMS_TO_TICKS(config.process_interval_ms)) {
             last_process_time = xTaskGetTickCount();
             
@@ -144,7 +144,6 @@ void ADSManager::processing_task_body() {
                         double var = ((double)fifos[ch].sum_x2 / fifos[ch].count) - (mean * mean);
                         float rms = sqrt(var < 0 ? 0 : var);
                         
-                        // Aplicar factor de conversión específico del canal
                         rms_histories[ch][rms_history_head] = rms * config.conversion_factors[ch];
                     }
                 }
