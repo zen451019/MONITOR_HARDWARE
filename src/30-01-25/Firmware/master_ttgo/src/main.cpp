@@ -94,6 +94,25 @@ std::vector<SensorSchedule> scheduleList; ///< Master scheduling list.
 SemaphoreHandle_t schedulerMutex;         ///< Mutex to protect concurrent access to scheduleList;
 TaskHandle_t dataRequestSchedulerHandle = NULL; ///< Handle para la tarea del planificador.
 
+// Epoch global para sincronizar intervalos comunes
+static uint32_t schedulerEpochMs = 0;
+
+// Orden determinista: intervalo, luego slaveID, luego sensorID
+static inline bool scheduleOrder(const SensorSchedule& a, const SensorSchedule& b) {
+    if (a.samplingInterval != b.samplingInterval) return a.samplingInterval < b.samplingInterval;
+    if (a.slaveID != b.slaveID) return a.slaveID < b.slaveID;
+    return a.sensorID < b.sensorID;
+}
+
+// Calcula el próximo múltiplo del intervalo desde la epoch
+static inline uint32_t alignNextSampleTime(uint32_t now, uint32_t epoch, uint32_t interval) {
+    if (interval == 0) return now;
+    if (now <= epoch) return epoch;
+    uint32_t elapsed = now - epoch;
+    uint32_t k = (elapsed + interval - 1) / interval; // ceil
+    return epoch + k * interval;
+}
+
 /**
  * @brief Initializes or updates the scheduling list (Scheduler).
  * @details Iterates through `slaveList`, calculates effective intervals based on channels and registers,
@@ -104,6 +123,12 @@ void initScheduler() {
     // Take exclusive control of the lists
     if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
         scheduleList.clear();
+
+        // fijar epoch si aún no existe
+        if (schedulerEpochMs == 0) {
+            schedulerEpochMs = millis();
+        }
+
         for (const auto& slave : slaveList) {
             for (const auto& sensor : slave.sensors) {
                 uint32_t calculatedInterval = sensor.samplingInterval; // Valor por defecto
@@ -113,14 +138,20 @@ void initScheduler() {
                     calculatedInterval = (uint32_t)sensor.samplingInterval * registersPerChannel;
                 }
 
+                uint32_t now = millis();
+                uint32_t nextAligned = alignNextSampleTime(now, schedulerEpochMs, calculatedInterval);
+
                 scheduleList.push_back({
                     slave.slaveID,
                     sensor.sensorID,
                     (uint16_t)calculatedInterval, // Usar el intervalo calculado
-                    millis() // Primer muestreo inmediato
+                    nextAligned                 // Alineado a epoch
                 });
             }
         }
+
+        // Orden determinista por periodo
+        std::sort(scheduleList.begin(), scheduleList.end(), scheduleOrder);
 
         // Imprimir el contenido de scheduleList
         Serial.println("Contenido de scheduleList (actualizado con cálculo de intervalo):");
@@ -245,8 +276,11 @@ void DataRequestScheduler(void *pvParameters) {
                         // Copia del trabajo a ejecutar fuera del mutex
                         dueItems.push_back(item);
 
-                        // Reprogramar inmediatamente (sin hacer I/O aquí)
-                        item.nextSampleTime = now + item.samplingInterval;
+                        // REPROGRAMACIÓN DETERMINISTA (sin deriva):
+                        // avanza en saltos de intervalo hasta quedar en el futuro
+                        do {
+                            item.nextSampleTime += item.samplingInterval;
+                        } while (timeReached(now, item.nextSampleTime));
                     }
 
                     if (item.nextSampleTime < nextEventTime) {
@@ -513,34 +547,6 @@ static bool formatAndEnqueueSensorData(const ModbusApiResult& response, uint8_t 
     Serial.printf("Formato: esclavo %u sensor %u -> regs:%u tipo:%u escala:%u comp:%u\n",
                   slaveId, params.sensorID, params.maxRegisters,
                   params.dataType, params.scale, params.compressedBytes);
-
-    // --- INICIO: Bloque de depuración para imprimir bytes HIGH y LOW ---
-    Serial.print("  [Debug] Bytes HIGH/LOW recibidos: ");
-    for (size_t i = 0; i < params.maxRegisters; ++i) {
-        size_t offset = i * 2;
-        if ((offset + 1) < response.data_len) {
-            uint8_t high = response.data[offset];
-            uint8_t low  = response.data[offset + 1];
-            Serial.printf("[H:%u, L:%u] ", high, low);
-        } else {
-            break;
-        }
-    }
-    Serial.println();
-    // --- FIN: Bloque de depuración ---
-
-    // NUEVO: reconstruir regs uint16 y mostrar primero/último
-    if (params.compressedBytes == 0 && params.dataType == 1) {
-        const size_t nRegs = std::min((size_t)params.maxRegisters, response.data_len / 2);
-        if (nRegs > 0) {
-            auto regAt = [&](size_t i) -> uint16_t {
-                size_t off = i * 2;
-                return (uint16_t(response.data[off]) << 8) | uint16_t(response.data[off + 1]);
-            };
-            Serial.printf("  [Debug] Regs u16: first=%u last=%u (n=%u)\n",
-                          regAt(0), regAt(nRegs - 1), (unsigned)nRegs);
-        }
-    }
 
     uint8_t dataType = params.dataType; // 1=uint8, 2=uint16
     uint8_t scale = params.scale;
@@ -1037,6 +1043,11 @@ void loop() {
  * @param slave El esclavo cuyas tareas de sensor se añadirán.
  */
 void _internal_addSlaveToScheduler(const ModbusSlaveParam& slave) {
+    // fijar epoch si aún no existe
+    if (schedulerEpochMs == 0) {
+        schedulerEpochMs = millis();
+    }
+
     for (const auto& sensor : slave.sensors) {
         uint32_t calculatedInterval = sensor.samplingInterval;
         if (sensor.numberOfChannels > 0 && sensor.maxRegisters > 0) {
@@ -1044,14 +1055,18 @@ void _internal_addSlaveToScheduler(const ModbusSlaveParam& slave) {
             calculatedInterval = (uint32_t)sensor.samplingInterval * registersPerChannel;
         }
 
+        uint32_t now = millis();
+        uint32_t nextAligned = alignNextSampleTime(now, schedulerEpochMs, calculatedInterval);
+
         scheduleList.push_back({
             slave.slaveID,
             sensor.sensorID,
             (uint16_t)calculatedInterval,
-            millis() // Muestreo inmediato para el nuevo sensor
+            nextAligned // Alineado a epoch
         });
         Serial.printf("  [Control] Tarea para SensorID %u añadida al planificador.\n", sensor.sensorID);
     }
+    std::sort(scheduleList.begin(), scheduleList.end(), scheduleOrder);
 }
 
 bool _internal_removeSlave(uint8_t slaveId) {
