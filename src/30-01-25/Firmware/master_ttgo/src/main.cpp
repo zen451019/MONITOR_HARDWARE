@@ -26,6 +26,7 @@ bool discoverDeviceSensors(uint8_t deviceId);
 static bool formatAndEnqueueSensorData(const ModbusApiResult& response, uint8_t slaveId, uint8_t sensorId);
 void parseAndStoreDiscoveryResponse(const uint8_t* data, size_t length, uint8_t slaveId);
 bool getSensorParams(uint8_t slaveId, uint8_t sensorID, uint16_t& startAddr, uint16_t& numRegs);
+void refreshSystemContext();
 
 // =================================================================================================
 // Modbus RTU Configuration
@@ -120,9 +121,11 @@ static inline uint32_t alignNextSampleTime(uint32_t now, uint32_t epoch, uint32_
  * @ingroup group_modbus_discovery
  */
 void initScheduler() {
-    // Take exclusive control of the lists
     if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
         scheduleList.clear();
+
+        // 1. ACTUALIZAR CONTEXTO DINÁMICO
+        refreshSystemContext();
 
         // fijar epoch si aún no existe
         if (schedulerEpochMs == 0) {
@@ -131,11 +134,12 @@ void initScheduler() {
 
         for (const auto& slave : slaveList) {
             for (const auto& sensor : slave.sensors) {
-                uint32_t calculatedInterval = sensor.samplingInterval; // Valor por defecto
+                
+
+                uint32_t calculatedInterval = sensor.samplingInterval; 
                 if (sensor.numberOfChannels > 0 && sensor.maxRegisters > 0) {
-                    // Calcular el intervalo total para llenar el buffer de registros
-                    uint16_t registersPerChannel = sensor.maxRegisters / sensor.numberOfChannels;
-                    calculatedInterval = (uint32_t)sensor.samplingInterval * registersPerChannel;
+                     uint16_t registersPerChannel = sensor.maxRegisters / sensor.numberOfChannels;
+                     calculatedInterval = (uint32_t)sensor.samplingInterval * registersPerChannel;
                 }
 
                 uint32_t now = millis();
@@ -144,8 +148,8 @@ void initScheduler() {
                 scheduleList.push_back({
                     slave.slaveID,
                     sensor.sensorID,
-                    (uint16_t)calculatedInterval, // Usar el intervalo calculado
-                    nextAligned                 // Alineado a epoch
+                    (uint16_t)calculatedInterval, 
+                    nextAligned                 
                 });
             }
         }
@@ -646,12 +650,14 @@ const uint8_t SENSOR_ID_CORRIENTE = 2; ///< Assigned to Bit 2 of the Activate By
 const uint8_t SENSOR_ID_EXT_START = 3; ///< Start of IDs for external sensors (Bits 3-7).
 const int MAX_SENSORES_EXTERNOS = 5;   ///< Number of remaining available bits (3 to 7).
 
-/**
- * @def AGGREGATION_INTERVAL_MS
- * @brief Aggregation interval (ms).
- * @ingroup group_data_format
- */
-#define AGGREGATION_INTERVAL_MS 6100 ///< Aggregation interval (6s + 100ms margin).
+// --- CONFIGURACIÓN DE PRIORIDAD ---
+// Define QUÉ sensores tienen rol de "Conductor" (Bus Driver).
+// Puedes agregar o quitar IDs aquí sin tocar el resto de la lógica.
+const std::vector<uint8_t> DEFINED_PRIORITY_IDS = { SENSOR_ID_VOLTAJE, SENSOR_ID_CORRIENTE };
+
+// --- ESTADO DEL SISTEMA (DINÁMICO) ---
+// Almacena qué sensores prioritarios están INSTALADOS actualmente entres todos los esclavos.
+std::vector<uint8_t> activePrioritySensors; 
 
 /**
  * @brief Builds a unified payload from a collection of sensor data.
@@ -940,6 +946,14 @@ bool isPrioritySensor(uint8_t sensorId) {
     return (sensorId == SENSOR_ID_VOLTAJE || sensorId == SENSOR_ID_CORRIENTE);
 }
 
+// Helper para saber si un ID está definido como prioritario en la configuración
+bool isConfiguredPriority(uint8_t sensorId) {
+    for (uint8_t id : DEFINED_PRIORITY_IDS) {
+        if (id == sensorId) return true;
+    }
+    return false;
+}
+
 /**
  * @brief Proactive task that collects and packages sensor data based on priority.
  * @details 
@@ -949,101 +963,102 @@ bool isPrioritySensor(uint8_t sensorId) {
  * @ingroup group_data_format
  */
 void DataAggregatorTask(void *pvParameters) {
-    std::vector<SensorDataPayload> pendingBuffer; // Buffer persistente entre iteraciones
+    std::vector<SensorDataPayload> pendingBuffer; 
     SensorDataPayload incomingPayload;
     uint8_t ID_MSG = 0x00;
-
-    // Configuración de tiempos
-    const TickType_t GRACE_PERIOD_MS = pdMS_TO_TICKS(200);  // Ventana para agrupar V+I
-    const TickType_t MAX_HOLD_TIME_MS = pdMS_TO_TICKS(10000); // Tiempo máximo que espera un pasajero si V/I falla
-    
+    const TickType_t GRACE_PERIOD_MS = pdMS_TO_TICKS(200);
+    const TickType_t MAX_HOLD_TIME_MS = pdMS_TO_TICKS(10000); 
     TickType_t lastSendTime = xTaskGetTickCount();
 
     while (true) {
         TickType_t now = xTaskGetTickCount();
-        
-        // 1. Calcular timeout dinámico para no dejar pasajeros varados eternamente
         TickType_t elapsed = now - lastSendTime;
         TickType_t waitTime = (elapsed < MAX_HOLD_TIME_MS) ? (MAX_HOLD_TIME_MS - elapsed) : 0;
 
-        // 2. Esperar datos
         if (xQueueReceive(queueSensorDataPayload, &incomingPayload, waitTime) == pdTRUE) {
             
-            // 3. Agregar al buffer (si ya existe ese sensor, actualizamos el dato)
+            // 1. Buffer update
             bool updated = false;
             for (auto &p : pendingBuffer) {
                 if (p.slaveId == incomingPayload.slaveId && p.sensorId == incomingPayload.sensorId) {
-                    p = incomingPayload; // Actualizar con dato más fresco
-                    updated = true;
-                    break;
+                    p = incomingPayload; updated = true; break;
                 }
             }
-            if (!updated) {
-                pendingBuffer.push_back(incomingPayload);
-            }
+            if (!updated) pendingBuffer.push_back(incomingPayload);
 
-            // 4. Evaluar estrategia de envío
+            // 2. LOGICA DE DECISIÓN DE ENVÍO
             bool triggerSend = false;
 
-            if (isPrioritySensor(incomingPayload.sensorId)) {
-                Serial.printf("[Agregador] Llego Conductor (Sensor %u). Esperando pareja...\n", incomingPayload.sensorId);
+            if (isConfiguredPriority(incomingPayload.sensorId)) {
                 
-                // Esperamos un momento por si llega la contraparte (ej. llego V, esperamos I)
-                vTaskDelay(GRACE_PERIOD_MS);
-
-                // Drenar la cola de lo que llegó en esos 200ms
-                while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
-                    bool rep = false;
-                    for (auto &p : pendingBuffer) {
-                        if (p.slaveId == incomingPayload.slaveId && p.sensorId == incomingPayload.sensorId) {
-                            p = incomingPayload; rep = true; break;
-                        }
-                    }
-                    if (!rep) pendingBuffer.push_back(incomingPayload);
+                // Consultar el contexto actual (copia rápida protegida)
+                size_t numPriorityTypesActive = 0;
+                if (xSemaphoreTake(schedulerMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    numPriorityTypesActive = activePrioritySensors.size();
+                    xSemaphoreGive(schedulerMutex);
+                } else {
+                    // Fallback si no podemos tomar el mutex (asumimos 1 para no bloquear envío)
+                    numPriorityTypesActive = 1; 
                 }
-                triggerSend = true; // El conductor da la orden de salida
+
+                // SI el sistema tiene MÁS de un tipo de sensor prioritario instalado (ej. V + I),
+                // Y acaba de llegar uno de ellos -> ESPERAMOS al resto.
+                if (numPriorityTypesActive > 1) {
+                    Serial.printf("[Agregador] Prioridad recibida (%u). Sistema tiene múltiples prioridades (%u). Esperando agrupación...\n", 
+                                  incomingPayload.sensorId, numPriorityTypesActive);
+                    
+                    vTaskDelay(GRACE_PERIOD_MS);
+                    
+                    // Recoger rezagados
+                    while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
+                        bool rep = false;
+                        for (auto &p : pendingBuffer) {
+                            if (p.slaveId == incomingPayload.slaveId && p.sensorId == incomingPayload.sensorId) {
+                                p = incomingPayload; rep = true; break;
+                            }
+                        }
+                        if (!rep) pendingBuffer.push_back(incomingPayload);
+                    }
+                } else {
+                    // Si numPriorityTypesActive es 1, significa que solo hay Voltaje (o solo Corriente) instalado.
+                    // No tiene sentido esperar a nadie más. ¡Sale el bus!
+                    Serial.println("[Agregador] Prioridad recibida (Única activa). Enviando inmediatamente.");
+                }
+                
+                triggerSend = true;
             } 
             else if (pendingBuffer.size() >= 8) {
-                // Protección: Buffer muy lleno
                 Serial.println("[Agregador] Buffer lleno. Forzando salida.");
                 triggerSend = true;
             }
-            else {
-                Serial.printf("[Agregador] Pasajero (Sensor %u) en sala de espera. Total esperando: %u\n", incomingPayload.sensorId, pendingBuffer.size());
-            }
 
-            // 5. Ejecutar envío si corresponde
+            // 3. Envío
             if (triggerSend && !pendingBuffer.empty()) {
-                Serial.printf("[Agregador] Enviando paquete unificado con %u sensores.\n", pendingBuffer.size());
-
-                std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
-
-                Fragmento loraFragment;
-                loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
-                memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
-
-                if (xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100)) == pdTRUE) {
-                    pendingBuffer.clear(); // Limpiar sala de espera
+                 Serial.printf("[Agregador] Enviando paquete con %u items.\n", pendingBuffer.size());
+                 std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
+                 
+                 Fragmento loraFragment;
+                 loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
+                 memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
+                 
+                 if (xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    pendingBuffer.clear();
                     lastSendTime = xTaskGetTickCount();
-                } else {
-                    Serial.println("[Agregador] ERROR: Cola LoRa llena.");
-                }
+                 }
             }
-
-        } else {
-            // timeout del xQueueReceive (MAX_HOLD_TIME expiró)
-            if (!pendingBuffer.empty()) {
-                Serial.println("[Agregador] Timeout (El conductor V/I no llegó). Enviando pasajeros pendientes.");
-                
-                std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
-                Fragmento loraFragment;
-                loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
-                memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
-
-                xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100));
-                
-                pendingBuffer.clear();
-                lastSendTime = xTaskGetTickCount();
+        } 
+        else {
+            // Timeout logic... (igual que antes)
+             if (!pendingBuffer.empty()) {
+                 // ... timeout send logic ...
+                 Serial.println("[Agregador] Timeout Agregador. Enviando.");
+                 std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
+                 Fragmento loraFragment;
+                 loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
+                 memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
+                 xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100));
+                 pendingBuffer.clear();
+                 lastSendTime = xTaskGetTickCount();
             }
         }
     }
@@ -1123,8 +1138,8 @@ void _internal_addSlaveToScheduler(const ModbusSlaveParam& slave) {
         scheduleList.push_back({
             slave.slaveID,
             sensor.sensorID,
-            (uint16_t)calculatedInterval,
-            nextAligned // Alineado a epoch
+            (uint16_t)calculatedInterval, 
+            nextAligned                 
         });
         Serial.printf("  [Control] Tarea para SensorID %u añadida al planificador.\n", sensor.sensorID);
     }
@@ -1193,12 +1208,14 @@ bool registerSlave(uint8_t slaveId) {
         Serial.printf("[Control] Esclavo %u respondió. Actualizando planificador...\n", slaveId);
         
         if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
-            // Encontrar el esclavo que acabamos de añadir a slaveList
             auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(),
                 [&](const ModbusSlaveParam& s) { return s.slaveID == slaveId; });
 
             if (slaveIt != slaveList.end()) {
                 _internal_addSlaveToScheduler(*slaveIt);
+                
+                // ACTUALIZAR CONTEXTO AQUÍ TAMBIÉN
+                refreshSystemContext();
             }
             xSemaphoreGive(schedulerMutex);
         }
@@ -1218,7 +1235,43 @@ void unregisterSlave(uint8_t slaveId) {
     if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
         if (!_internal_removeSlave(slaveId)) {
             Serial.printf("[Control] No se encontró el esclavo %u para eliminar.\n", slaveId);
+        } else {
+            // Si borramos algo, actualizamos el contexto
+            refreshSystemContext();
         }
         xSemaphoreGive(schedulerMutex);
     }
+}
+
+/**
+ * @brief Escanea la lista de esclavos y actualiza el inventario de sensores prioritarios activos.
+ * @note Debe llamarse con el schedulerMutex tomado.
+ */
+void refreshSystemContext() {
+    activePrioritySensors.clear();
+    
+    // Usamos un set temporal para evitar duplicados si hay varios esclavos con el mismo tipo de sensor
+    std::vector<uint8_t> foundIds;
+
+    for (const auto& slave : slaveList) {
+        for (const auto& sensor : slave.sensors) {
+            if (isConfiguredPriority(sensor.sensorID)) {
+                // Verificar si ya lo anotamos
+                bool alreadyInList = false;
+                for(uint8_t id : foundIds) { if(id == sensor.sensorID) alreadyInList = true; }
+                
+                if (!alreadyInList) {
+                    foundIds.push_back(sensor.sensorID);
+                }
+            }
+        }
+    }
+    
+    // Copiar al estado global
+    activePrioritySensors = foundIds;
+    
+    Serial.print("[Contexto] Prioridades Activas: ");
+    if (activePrioritySensors.empty()) Serial.print("Ninguna");
+    for (uint8_t id : activePrioritySensors) Serial.printf("[%u] ", id);
+    Serial.println();
 }
