@@ -935,55 +935,117 @@ void tareaRunLoop(void *pvParameters) {
     }
 }
 
-#define AGGREGATION_INTERVAL_MS 6100 ///< Aggregation interval (6s + 100ms margin).
+// Helper para determinar si un sensor tiene rol de "Conductor" (Dispara el envío)
+bool isPrioritySensor(uint8_t sensorId) {
+    return (sensorId == SENSOR_ID_VOLTAJE || sensorId == SENSOR_ID_CORRIENTE);
+}
 
 /**
- * @brief Proactive task that collects and packages sensor data at a fixed rate.
- * @details Wakes up every AGGREGATION_INTERVAL_MS, empties the data queue, and sends a
- * single LoRaWAN payload if it has collected anything.
+ * @brief Proactive task that collects and packages sensor data based on priority.
+ * @details 
+ * - Priority Sensors (V/I) trigger the transmission immediately (after a grace period).
+ * - Standard Sensors trigger buffering. They only send when a Priority Sensor arrives
+ *   or a safety timeout occurs.
  * @ingroup group_data_format
  */
 void DataAggregatorTask(void *pvParameters) {
-    std::vector<SensorDataPayload> collectedPayloads;
+    std::vector<SensorDataPayload> pendingBuffer; // Buffer persistente entre iteraciones
     SensorDataPayload incomingPayload;
     uint8_t ID_MSG = 0x00;
-    const TickType_t gracePeriod = pdMS_TO_TICKS(200); // Grace period of 200ms to collect bursts
+
+    // Configuración de tiempos
+    const TickType_t GRACE_PERIOD_MS = pdMS_TO_TICKS(200);  // Ventana para agrupar V+I
+    const TickType_t MAX_HOLD_TIME_MS = pdMS_TO_TICKS(10000); // Tiempo máximo que espera un pasajero si V/I falla
+    
+    TickType_t lastSendTime = xTaskGetTickCount();
 
     while (true) {
-        // 1. Wait indefinitely for the *first* payload to arrive.
-        if (xQueueReceive(queueSensorDataPayload, &incomingPayload, portMAX_DELAY) == pdTRUE) {
-            Serial.println("\n[Agregador] Primer payload recibido. Iniciando ciclo de recolección.");
+        TickType_t now = xTaskGetTickCount();
+        
+        // 1. Calcular timeout dinámico para no dejar pasajeros varados eternamente
+        TickType_t elapsed = now - lastSendTime;
+        TickType_t waitTime = (elapsed < MAX_HOLD_TIME_MS) ? (MAX_HOLD_TIME_MS - elapsed) : 0;
+
+        // 2. Esperar datos
+        if (xQueueReceive(queueSensorDataPayload, &incomingPayload, waitTime) == pdTRUE) {
             
-            collectedPayloads.clear();
-            collectedPayloads.push_back(incomingPayload);
-
-            // 2. Wait a short grace period to allow other payloads to arrive.
-            vTaskDelay(gracePeriod);
-
-            // 3. Drain the queue of any other payloads that arrived during the grace period.
-            while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
-                collectedPayloads.push_back(incomingPayload);
-                Serial.printf("[Agregador] Recolectado payload adicional de Slave %u, Sensor %u.\n", incomingPayload.slaveId, incomingPayload.sensorId);
-            }
-
-            // 4. If we have data, build and send the unified payload.
-            Serial.printf("[Agregador] Recolección finalizada. Empaquetando %u payloads para LoRa.\n", collectedPayloads.size());
-
-            std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, collectedPayloads);
-
-            Fragmento loraFragment;
-            loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
-            memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
-
-            if (loraFragment.len > 0) {
-                if (xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100)) == pdTRUE) {
-                    Serial.printf("[Agregador] Fragmento LoRa de %u bytes enviado a la cola.\n", loraFragment.len);
-                } else {
-                    Serial.println("[Agregador] ERROR: No se pudo encolar el fragmento LoRa.");
+            // 3. Agregar al buffer (si ya existe ese sensor, actualizamos el dato)
+            bool updated = false;
+            for (auto &p : pendingBuffer) {
+                if (p.slaveId == incomingPayload.slaveId && p.sensorId == incomingPayload.sensorId) {
+                    p = incomingPayload; // Actualizar con dato más fresco
+                    updated = true;
+                    break;
                 }
             }
+            if (!updated) {
+                pendingBuffer.push_back(incomingPayload);
+            }
+
+            // 4. Evaluar estrategia de envío
+            bool triggerSend = false;
+
+            if (isPrioritySensor(incomingPayload.sensorId)) {
+                Serial.printf("[Agregador] Llego Conductor (Sensor %u). Esperando pareja...\n", incomingPayload.sensorId);
+                
+                // Esperamos un momento por si llega la contraparte (ej. llego V, esperamos I)
+                vTaskDelay(GRACE_PERIOD_MS);
+
+                // Drenar la cola de lo que llegó en esos 200ms
+                while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
+                    bool rep = false;
+                    for (auto &p : pendingBuffer) {
+                        if (p.slaveId == incomingPayload.slaveId && p.sensorId == incomingPayload.sensorId) {
+                            p = incomingPayload; rep = true; break;
+                        }
+                    }
+                    if (!rep) pendingBuffer.push_back(incomingPayload);
+                }
+                triggerSend = true; // El conductor da la orden de salida
+            } 
+            else if (pendingBuffer.size() >= 8) {
+                // Protección: Buffer muy lleno
+                Serial.println("[Agregador] Buffer lleno. Forzando salida.");
+                triggerSend = true;
+            }
+            else {
+                Serial.printf("[Agregador] Pasajero (Sensor %u) en sala de espera. Total esperando: %u\n", incomingPayload.sensorId, pendingBuffer.size());
+            }
+
+            // 5. Ejecutar envío si corresponde
+            if (triggerSend && !pendingBuffer.empty()) {
+                Serial.printf("[Agregador] Enviando paquete unificado con %u sensores.\n", pendingBuffer.size());
+
+                std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
+
+                Fragmento loraFragment;
+                loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
+                memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
+
+                if (xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    pendingBuffer.clear(); // Limpiar sala de espera
+                    lastSendTime = xTaskGetTickCount();
+                } else {
+                    Serial.println("[Agregador] ERROR: Cola LoRa llena.");
+                }
+            }
+
+        } else {
+            // timeout del xQueueReceive (MAX_HOLD_TIME expiró)
+            if (!pendingBuffer.empty()) {
+                Serial.println("[Agregador] Timeout (El conductor V/I no llegó). Enviando pasajeros pendientes.");
+                
+                std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
+                Fragmento loraFragment;
+                loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
+                memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
+
+                xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100));
+                
+                pendingBuffer.clear();
+                lastSendTime = xTaskGetTickCount();
+            }
         }
-        // Loop immediately back to waiting for the next payload.
     }
 }
 
