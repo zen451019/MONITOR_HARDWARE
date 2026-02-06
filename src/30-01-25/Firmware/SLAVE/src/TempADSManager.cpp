@@ -7,37 +7,67 @@ static volatile float _current_temperature = 0.0f;
 
 // 1. CONSTRUCTOR
 TempADSManager::TempADSManager(const ADSconfig& cfg)
-    // 1. Inicializamos al padre con los datos básicos
-    // Al heredar ADSconfig de ADSBaseConfig, podemos pasar 'cfg' directamente
     : ADSBase(cfg), 
-      
-    // 2. Inicializamos nuestra variable local 'config'
-    // Aquí se copian AUTOMÁTICAMENTE r0_ohms, serie_resistor_ohms, etc.
-      config(cfg)   
+      config(cfg)
 {
+    // --- NUEVO: Inicializar Buffer ---
+    if (config.history_size > 0) {
+        temp_history = new float[config.history_size](); // Init a 0
+    }
+    history_head = 0;
+    data_mutex = xSemaphoreCreateMutex(); // Crear el semáforo
 }
 
 // 2. DESTRUCTOR
 TempADSManager::~TempADSManager() {
     if (temp_task_handle != nullptr) {
         vTaskDelete(temp_task_handle);
-        temp_task_handle = nullptr;
+    }
+    // --- NUEVO: Limpieza ---
+    if (temp_history != nullptr) {
+        delete[] temp_history;
+    }
+    if (data_mutex != nullptr) {
+        vSemaphoreDelete(data_mutex);
     }
 }
 
 // 3. BEGIN
 bool TempADSManager::begin() {
-    // ERROR ANTERIOR: if (!ADSBase::begin()) ... -> Esto falla porque el padre es abstracto.
-    
-    // CORRECCIÓN: Llamamos a initADS(), la herramienta protegida que nos dio el padre
-    // Esta función hace el ads->begin(addr) y ads->setGain(gain) internamente.
+    // 1. Inicializa el I2C y la Ganancia (desde el padre)
     if (!initADS()) {
         return false;
     }
     
-    // Aquí puedes añadir configuraciones extras si quisieras
-    // ads->setDataRate(RATE_ADS1115_8SPS); 
+    // 2. CONFIGURAR DATA RATE (SAMPLING RATE)
+    // El chip necesita traducir tu número entero a la constante correcta
     
+    if (config.type == ADSType::ADS1115) {
+        switch(config.sampling_rate) {
+            case 8:    ads->setDataRate(RATE_ADS1115_8SPS); break;
+            case 16:   ads->setDataRate(RATE_ADS1115_16SPS); break;
+            case 32:   ads->setDataRate(RATE_ADS1115_32SPS); break;
+            case 64:   ads->setDataRate(RATE_ADS1115_64SPS); break;
+            case 128:  ads->setDataRate(RATE_ADS1115_128SPS); break; // Default común
+            case 250:  ads->setDataRate(RATE_ADS1115_250SPS); break;
+            case 475:  ads->setDataRate(RATE_ADS1115_475SPS); break;
+            case 860:  ads->setDataRate(RATE_ADS1115_860SPS); break;
+            default:   ads->setDataRate(RATE_ADS1115_128SPS); break; // Fallback seguro
+        }
+    } else {
+        // Para ADS1015 (es más rápido)
+        switch(config.sampling_rate) {
+            case 128:  ads->setDataRate(RATE_ADS1015_128SPS); break;
+            case 250:  ads->setDataRate(RATE_ADS1015_250SPS); break;
+            case 490:  ads->setDataRate(RATE_ADS1015_490SPS); break;
+            case 920:  ads->setDataRate(RATE_ADS1015_920SPS); break;
+            case 1600: ads->setDataRate(RATE_ADS1015_1600SPS); break;
+            case 2400: ads->setDataRate(RATE_ADS1015_2400SPS); break;
+            case 3300: ads->setDataRate(RATE_ADS1015_3300SPS); break;
+            default:   ads->setDataRate(RATE_ADS1015_1600SPS); break;
+        }
+    }
+
     return true;
 }
 
@@ -66,42 +96,76 @@ void TempADSManager::temp_task_trampoline(void* arg) {
 // 6. BODY (La lógica del bucle)
 void TempADSManager::temp_task_body() {
     while (true) {
-        // Leemos el canal definido en la configuración
-        // Asumiendo que ADSBase tiene un método readChannel(int channel)
-        int16_t adc_val = readChannel(config.num_channels); 
+
+        float Vref = fabsf(getRaw(32));   // Canal diferencial 2-3 para referencia
+        float Vcable = getRaw(31); // Canal diferencial 1-3 para compensación de cable
+        float Vpt100 = getRaw(30); // Usamos el canal diferencial 0-3 para la PT100
+
+        float I = Vref / config.serie_resistor_ohms;
+
+        float R_cable = fabsf(Vcable / I);
+
+        float Rpt100 = (Vpt100 / I) - (2 * R_cable);
         
-        // Calculamos temperatura
-        float temp = calculatePT100Temp(adc_val);
+        // Supongamos que aquí conviertes Rpt100 a Temperatura
+        // float temperature = (Rpt100 - config.r0_ohms) / ... ; 
+        // Por ahora uso un dummy para el ejemplo:
+        float temperature = Rpt100; // O llama a tu función de cálculo
+
+        // --- NUEVO: GUARDAR EN HISTORIAL (Estilo ADSManager) ---
+        if (xSemaphoreTake(data_mutex, portMAX_DELAY) == pdTRUE) {
+            
+            // Guardamos en el buffer circular
+            temp_history[history_head] = temperature;
+            
+            // Avanzamos cabeza
+            history_head = (history_head + 1) % config.history_size;
+            
+            xSemaphoreGive(data_mutex);
+        }
         
-        // Guardamos el valor (Aquí iría el Mutex si lo implementas en el futuro)
-        _current_temperature = temp;
-        
-        // Esperamos el tiempo definido en la config
         vTaskDelay(pdMS_TO_TICKS(config.process_interval_ms));
     }
 }
 
-// 7. CÁLCULO PT100
-float TempADSManager::calculatePT100Temp(int16_t raw_adc) {
-    // Corrección: Usamos 'config' que es el nombre definido en tu .h
-    
-    if (raw_adc <= 0) return -99.9; // Error o desconectado
+// --- NUEVOS GETTERS (Copiados la lógica de ADSManager) ---
 
-    // Ganancia 1: +/- 4.096V -> 1 bit = 0.125mV (Ajustar según tu ganancia real)
-    float voltage = raw_adc * 0.000125f;
-    
-    float vcc = 3.3f; 
-    // Fórmula divisor de tensión usando las variables de tu config
-    float r_pt100 = (voltage * config.serie_resistor_ohms) / (vcc - voltage);
-
-    // Fórmula lineal simple para temperatura
-    float temp = (r_pt100 - config.r0_ohms) / (config.r0_ohms * 0.00385f);
-    
-    return temp;
+float TempADSManager::getLatest(int channel) {
+    // TempADSManager solo tiene 1 "canal" de temperatura, ignoramos el int channel
+    float value = 0.0f;
+    getHistory(0, &value, 1);
+    return value;
 }
 
-// 8. GETTER
-float TempADSManager::getTemperature() {
-    // Aquí devolverías el valor protegido por mutex si existiera
-    return _current_temperature;
+int TempADSManager::getHistory(int channel, float* output_buffer, int count) {
+    if (count > config.history_size || temp_history == nullptr) {
+        return 0;
+    }
+    
+    if (xSemaphoreTake(data_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        int most_recent = (history_head == 0) ? (config.history_size - 1) : (history_head - 1);
+        
+        for (int i = 0; i < count; i++) {
+            // Lógica circular inversa (del más reciente hacia atras)
+            int idx = (most_recent - (count - 1 - i) + config.history_size) % config.history_size;
+            output_buffer[i] = temp_history[idx];
+        }
+        
+        xSemaphoreGive(data_mutex);
+        return count;
+    }
+    return 0;
+}
+
+float TempADSManager::getRaw(uint8_t channel, uint8_t NUM_SAMPLES) {
+    float sum = 0.0f;
+    for (uint8_t i = 0; i < NUM_SAMPLES; i++) {
+        sum += readChannel(channel);
+        vTaskDelay(pdMS_TO_TICKS(10)); // Pequeña pausa entre muestras
+    }
+    
+    float average_adc = (float)sum / NUM_SAMPLES;
+    float voltage = ads->computeVolts(average_adc); // Usamos el método del ADS para convertir a voltios
+
+    return voltage;
 }

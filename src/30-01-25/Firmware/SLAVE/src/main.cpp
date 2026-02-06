@@ -39,7 +39,7 @@ ADSConfig adsConfig(
     1000                   // process_interval_ms
 );
 
-ADSManager* adsManager = nullptr;
+ADSBase* sensorDriver = nullptr; // Lo llamamos sensorDriver para que sea neutro
 
 // ===== MODBUS =====
 uint16_t holdingRegisters[NUM_REGISTERS];
@@ -64,7 +64,10 @@ void dataUpdateTask(void* pvParameters) {
         if (xSemaphoreTake(dataMutex, portMAX_DELAY) == pdTRUE) {
             for (int ch = 0; ch < NUM_CHANNELS; ch++) {
                 float rms_values[samples_per_channel];
-                int count = adsManager->getRMSHistory(ch, rms_values, samples_per_channel);
+                
+                // --- CAMBIO AQUÍ: getRMSHistory -> getHistory ---
+                // Ahora usamos el método estandarizado que viene de ADSBase
+                int count = sensorDriver->getHistory(ch, rms_values, samples_per_channel);
                 
                 for (int i = 0; i < samples_per_channel; i++) {
                     int idx = ch * samples_per_channel + i;
@@ -123,10 +126,10 @@ void setup() {
     Wire.begin(); 
     Wire.setClock(400000L);
     
-    adsManager = new ADSManager(adsConfig);
-    if (!adsManager->begin()) {
-        Serial.println("ERROR: ADS1015 no inicializado");
-        while(1) { vTaskDelay(1000); }
+    sensorDriver = new ADSManager(adsConfig);
+    if (!sensorDriver->begin()) {
+        Serial.println("Error iniciando sensor");
+        while(1);
     }
     
     Serial.println("ADS1015 inicializado correctamente");
@@ -138,7 +141,7 @@ void setup() {
     
     dataMutex = xSemaphoreCreateMutex();
     
-    adsManager->startSampling();
+    sensorDriver->startSampling();
     xTaskCreatePinnedToCore(dataUpdateTask, "ModbusUpdate", 2048, NULL, 1, NULL, 0);
     
     Serial.println("Sistema listo - Iniciando muestreo...");
@@ -146,8 +149,11 @@ void setup() {
 
 void loop() {
     vTaskDelay(pdMS_TO_TICKS(5000));
+    
+    // --- CAMBIO AQUÍ: getLatestRMS -> getLatest ---
+    // El método es agnóstico, no importa si devuelve RMS o Temp
     Serial.printf("CH0: %.1f | CH1: %.1f | CH2: %.1f V\n",
-                  adsManager->getLatestRMS(0),
-                  adsManager->getLatestRMS(1),
-                  adsManager->getLatestRMS(2));
+                  sensorDriver->getLatest(0),
+                  sensorDriver->getLatest(1),
+                  sensorDriver->getLatest(2));
 }

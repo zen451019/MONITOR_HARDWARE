@@ -156,7 +156,7 @@ void ADSManager::processing_task_body() {
     }
 }
 
-int ADSManager::getRMSHistory(int channel, float* output_buffer, int count) {
+int ADSManager::getHistory(int channel, float* output_buffer, int count) {
     if (channel < 0 || channel >= config.num_channels || count > config.history_size) {
         return 0;
     }
@@ -175,14 +175,14 @@ int ADSManager::getRMSHistory(int channel, float* output_buffer, int count) {
     return 0;
 }
 
-float ADSManager::getLatestRMS(int channel) {
+float ADSManager::getLatest(int channel) {
     float value = 0;
-    getRMSHistory(channel, &value, 1);
+    getHistory(channel, &value, 1);
     return value;
 }
 
 void ADSManager::getRMSAllChannels(float* output_array) {
     for (int ch = 0; ch < config.num_channels; ch++) {
-        output_array[ch] = getLatestRMS(ch);
+        output_array[ch] = getLatest(ch);
     }
 }

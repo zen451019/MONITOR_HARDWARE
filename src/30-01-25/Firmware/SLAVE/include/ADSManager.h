@@ -81,8 +81,8 @@ public:
     void startSampling() override;
     
     // API para obtener datos procesados (sin cambios)
-    int getRMSHistory(int channel, float* output_buffer, int count);
-    float getLatestRMS(int channel);
+    int getHistory(int channel, float* output_buffer, int count);
+    float getLatest(int channel);
     void getRMSAllChannels(float* output_array);
 };
 
