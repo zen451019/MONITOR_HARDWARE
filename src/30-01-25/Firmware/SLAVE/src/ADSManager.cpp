@@ -3,7 +3,7 @@
 // ===== CONSTRUCTOR =====
 ADSManager::ADSManager(const ADSConfig& cfg) 
     // ← CAMBIO: Llamar al constructor de ADSBase primero
-    : ADSBase({cfg.type, cfg.i2c_addr, cfg.gain, cfg.num_channels, cfg.conversion_factors}),
+    : ADSBase({cfg.type, cfg.i2c_addr, cfg.gain, cfg.process_interval_ms}),
       config(cfg),  // Guardar config completo
       data_ready(false), 
       current_channel(0) {

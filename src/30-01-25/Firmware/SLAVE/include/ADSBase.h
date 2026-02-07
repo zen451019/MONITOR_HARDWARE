@@ -13,8 +13,7 @@ struct ADSBaseConfig {
     ADSType type;
     uint8_t i2c_addr;
     adsGain_t gain;
-    int num_channels;
-    const float* conversion_factors;
+    int process_interval_ms;
 };
 
 // ===== CLASE BASE ABSTRACTA =====

@@ -15,7 +15,7 @@
 // ===== SELECCIÓN DE MODO =====
 // Descomenta UNO de los dos para elegir el modo (o úsalo desde platformio.ini)
 // #define MODE_RMS
-#define MODE_TEMP  // <--- En este ejemplo activamos Temperatura
+#define MODE_RMS  // <--- En este ejemplo activamos Temperatura
 
 #if defined(MODE_RMS)
     #include "ADSManager.h"
@@ -39,23 +39,27 @@ ModbusServerRTU MBserver(2000);
 #if defined(MODE_RMS)
     const float CONVERSION_FACTORS[] = {0.653f, 0.679f, 1.133f};
     ADSConfig config(
-        ADSType::ADS1015, 0x48, GAIN_TWOTHIRDS, NUM_CHANNELS, CONVERSION_FACTORS,
-        19, 3300, 320, 100, 1000
+        ADSType::ADS1015,   // RMS puede usar el modelo más rápido (1015)
+        0x48,
+        GAIN_TWOTHIRDS,     // Ganancia común para señales de hasta ±6.144V 
+        1000,               // Intervalo de procesamiento (1 segundo)
+        NUM_CHANNELS,       // Número de canales a muestrear
+        CONVERSION_FACTORS, // Puntero a los factores de conversión específicos por canal
+        19,                 // alert_pin
+        3300,               // sampling_rate: 3300 SPS (máximo para ADS1015, para asegurar mediciones rápidas y precisas)
+        320,                // Fifo size: 320 muestras por canal (10 segundos de historial a 330 SPS)
+        100                 // History size: 100 muestras por canal (para mantener un historial de ~3 segundos a 330 SPS)
     );
 #elif defined(MODE_TEMP)
-    // Factores dummy para PT100 (se usan en cálculo interno)
-    const float PT100_FACTORS[] = {1.0f, 1.0f, 1.0f}; 
     // Configuración específica de Temp (R0, R_Serie, etc)
     ADSconfig config(
         ADSType::ADS1115,    // Temp necesita más resolución (16-bit)
         0x48,                
         GAIN_TWO,            // Ganancia más alta para medir mV pequeños
-        10,                  // Canal 10 = Diferencial 0-1
-        PT100_FACTORS,
+        1000,                // Intervalo
         4700,                // R serie
         100,                 // R0 (PT100)
         128,                 // Sample rate lento (más preciso)
-        1000,                // Intervalo
         50                   // Historial
     );
 #endif

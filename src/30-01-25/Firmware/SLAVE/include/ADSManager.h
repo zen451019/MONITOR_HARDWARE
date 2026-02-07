@@ -11,25 +11,28 @@ struct ADSConfig : public ADSBaseConfig {
     int samples_per_second;
     int fifo_size;
     int history_size;
-    int process_interval_ms;
+    int num_channels;
+    const float* conversion_factors;
     
     // ← AGREGAR: Constructor para facilitar la inicialización
-    ADSConfig(ADSType t, uint8_t addr, adsGain_t g, int ch, const float* factors,
-              int alert, int sps, int fifo, int hist, int interval)
-        : ADSBaseConfig{t, addr, g, ch, factors},  // Inicializar clase base
+    ADSConfig(ADSType t, uint8_t addr, adsGain_t g, int interval, int ch, const float* factors,
+              int alert, int sps, int fifo, int hist)
+        : ADSBaseConfig{t, addr, g, interval},  // Inicializar clase base
+          num_channels(ch),
+          conversion_factors(factors),
           alert_pin(alert),
           samples_per_second(sps),
           fifo_size(fifo),
-          history_size(hist),
-          process_interval_ms(interval) {}
+          history_size(hist) {}
     
     ADSConfig() 
-        : ADSBaseConfig{ADSType::ADS1015, 0x48, GAIN_TWOTHIRDS, 0, nullptr},
+        : ADSBaseConfig{ADSType::ADS1015, 0x48, GAIN_TWOTHIRDS, 0},
+          num_channels(0),
+          conversion_factors(nullptr),
           alert_pin(-1),
           samples_per_second(0),
           fifo_size(0),
-          history_size(0),
-          process_interval_ms(0) {}
+          history_size(0) {}
 };
 
 // Estructura para una muestra leída (sin cambios)

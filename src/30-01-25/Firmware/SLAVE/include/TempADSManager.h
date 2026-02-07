@@ -10,23 +10,20 @@ struct ADSconfig : public ADSBaseConfig {
     int serie_resistor_ohms;
     int r0_ohms;
     uint16_t sampling_rate;
-    int process_interval_ms;
     int history_size; // <--- NUEVO: Para igualar a ADSManager
 
-    ADSconfig(ADSType t, uint8_t addr, adsGain_t g, int ch, const float* factors,
-              int series_resistor, int r0, uint16_t sampling_rate, int interval, int hist_size)
-        : ADSBaseConfig{t, addr, g, ch, factors},
+    ADSconfig(ADSType t, uint8_t addr, adsGain_t g, int process_interval_ms,
+              int series_resistor, int r0, uint16_t sampling_rate, int hist_size)
+        : ADSBaseConfig{t, addr, g, process_interval_ms},
           serie_resistor_ohms(series_resistor),
           r0_ohms(r0),
           sampling_rate(sampling_rate),
-          process_interval_ms(interval),
           history_size(hist_size) {} // <--- Init
     ADSconfig() 
-        : ADSBaseConfig{ADSType::ADS1015, 0x48, GAIN_TWOTHIRDS, 0, nullptr},
+        : ADSBaseConfig{ADSType::ADS1015, 0x48, GAIN_TWOTHIRDS, 0},
           serie_resistor_ohms(0),
           r0_ohms(100),
           sampling_rate(128),
-          process_interval_ms(0),
           history_size(0) {}
 };
 
