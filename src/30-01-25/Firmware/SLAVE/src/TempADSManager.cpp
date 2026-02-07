@@ -97,30 +97,34 @@ void TempADSManager::temp_task_trampoline(void* arg) {
 void TempADSManager::temp_task_body() {
     while (true) {
 
-        float Vref = fabsf(getRaw(32));   // Canal diferencial 2-3 para referencia
-        float Vcable = getRaw(31); // Canal diferencial 1-3 para compensación de cable
-        float Vpt100 = getRaw(30); // Usamos el canal diferencial 0-3 para la PT100
+        float Vref = fabsf(getRaw(32));   
+        float Vcable = getRaw(31); 
+        float Vpt100 = getRaw(30); 
 
-        float I = Vref / config.serie_resistor_ohms;
+        float temperature = -999.0f; // VALOR DE ERROR POR DEFECTO
 
-        float R_cable = fabsf(Vcable / I);
+        // VALIDACIÓN 1: Resistor de serie válido
+        if (config.serie_resistor_ohms > 0.0f) {
+            
+            float I = Vref / config.serie_resistor_ohms;
 
-        float Rpt100 = (Vpt100 / I) - (2 * R_cable);
-        
-        // Supongamos que aquí conviertes Rpt100 a Temperatura
-        // float temperature = (Rpt100 - config.r0_ohms) / ... ; 
-        // Por ahora uso un dummy para el ejemplo:
-        float temperature = Rpt100; // O llama a tu función de cálculo
+            // VALIDACIÓN 2: Corriente válida (>1mA)
+            if (I >= 0.0001f) {
+                
+                float R_cable = fabsf(Vcable / I);
+                float Rpt100 = (Vpt100 / I) - (2 * R_cable);
+                
+                // VALIDACIÓN 3: Resultado físicamente válido
+                if (Rpt100 >= 0.0f && !isnan(Rpt100) && !isinf(Rpt100)) {
+                    temperature = Rpt100;
+                }
+            }
+        }
 
-        // --- NUEVO: GUARDAR EN HISTORIAL (Estilo ADSManager) ---
+        // GUARDAR (siempre guarda algo, incluso -999.0f si hay error)
         if (xSemaphoreTake(data_mutex, portMAX_DELAY) == pdTRUE) {
-            
-            // Guardamos en el buffer circular
             temp_history[history_head] = temperature;
-            
-            // Avanzamos cabeza
             history_head = (history_head + 1) % config.history_size;
-            
             xSemaphoreGive(data_mutex);
         }
         

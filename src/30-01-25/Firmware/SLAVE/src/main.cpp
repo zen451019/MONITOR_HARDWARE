@@ -11,7 +11,19 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include "ModbusServerRTU.h"
-#include "ADSManager.h"
+
+// ===== SELECCIÓN DE MODO =====
+// Descomenta UNO de los dos para elegir el modo (o úsalo desde platformio.ini)
+// #define MODE_RMS
+#define MODE_TEMP  // <--- En este ejemplo activamos Temperatura
+
+#if defined(MODE_RMS)
+    #include "ADSManager.h"
+#elif defined(MODE_TEMP)
+    #include "TempADSManager.h"
+#else
+    #error "Debes definir MODE_RMS o MODE_TEMP"
+#endif
 
 // ===== CONFIGURACIÓN =====
 #define SLAVE_ID 1
@@ -24,22 +36,31 @@ HardwareSerial ModbusSerial(1);
 ModbusServerRTU MBserver(2000);
 
 // ===== CONFIGURACIÓN ADS =====
-const float CONVERSION_FACTORS[] = {0.653f, 0.679f, 1.133f};
+#if defined(MODE_RMS)
+    const float CONVERSION_FACTORS[] = {0.653f, 0.679f, 1.133f};
+    ADSConfig config(
+        ADSType::ADS1015, 0x48, GAIN_TWOTHIRDS, NUM_CHANNELS, CONVERSION_FACTORS,
+        19, 3300, 320, 100, 1000
+    );
+#elif defined(MODE_TEMP)
+    // Factores dummy para PT100 (se usan en cálculo interno)
+    const float PT100_FACTORS[] = {1.0f, 1.0f, 1.0f}; 
+    // Configuración específica de Temp (R0, R_Serie, etc)
+    ADSconfig config(
+        ADSType::ADS1115,    // Temp necesita más resolución (16-bit)
+        0x48,                
+        GAIN_TWO,            // Ganancia más alta para medir mV pequeños
+        10,                  // Canal 10 = Diferencial 0-1
+        PT100_FACTORS,
+        4700,                // R serie
+        100,                 // R0 (PT100)
+        128,                 // Sample rate lento (más preciso)
+        1000,                // Intervalo
+        50                   // Historial
+    );
+#endif
 
-ADSConfig adsConfig(
-    ADSType::ADS1015,      // type
-    0x48,                  // i2c_addr
-    GAIN_TWOTHIRDS,        // gain
-    NUM_CHANNELS,          // num_channels
-    CONVERSION_FACTORS,    // conversion_factors
-    19,                    // alert_pin
-    3300,                  // samples_per_second
-    320,                   // fifo_size
-    100,                   // history_size
-    1000                   // process_interval_ms
-);
-
-ADSBase* sensorDriver = nullptr; // Lo llamamos sensorDriver para que sea neutro
+ADSBase* sensorDriver = nullptr; // Puntero Polimórfico
 
 // ===== MODBUS =====
 uint16_t holdingRegisters[NUM_REGISTERS];
@@ -126,7 +147,15 @@ void setup() {
     Wire.begin(); 
     Wire.setClock(400000L);
     
-    sensorDriver = new ADSManager(adsConfig);
+    // ===== INSTANCIACIÓN CONDICIONAL =====
+    #if defined(MODE_RMS)
+        Serial.println(">>> MODO: RMS MONITOR <<<");
+        sensorDriver = new ADSManager(config);
+    #elif defined(MODE_TEMP)
+        Serial.println(">>> MODO: TEMPERATURA PT100 <<<");
+        sensorDriver = new TempADSManager(config);
+    #endif
+
     if (!sensorDriver->begin()) {
         Serial.println("Error iniciando sensor");
         while(1);
