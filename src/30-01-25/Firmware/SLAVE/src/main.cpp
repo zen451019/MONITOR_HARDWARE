@@ -15,12 +15,14 @@
 // ===== SELECCIÓN DE MODO =====
 // Descomenta UNO de los dos para elegir el modo (o úsalo desde platformio.ini)
 // #define MODE_RMS
-#define MODE_RMS  // <--- En este ejemplo activamos Temperatura
+#define MODE_TEMP  // <--- En este ejemplo activamos Temperatura
 
 #if defined(MODE_RMS)
     #include "ADSManager.h"
 #elif defined(MODE_TEMP)
     #include "TempADSManager.h"
+#elif defined(MODE_PRESS)
+    #include "PressADSManager.h"
 #else
     #error "Debes definir MODE_RMS o MODE_TEMP"
 #endif
@@ -60,7 +62,23 @@ ModbusServerRTU MBserver(2000);
         4700,                // R serie
         100,                 // R0 (PT100)
         128,                 // Sample rate lento (más preciso)
+        10,
         50                   // Historial
+    );
+#elif defined(MODE_PRESS)
+    ADSconfig config(
+        ADSType::ADS1115,    // Presión también se beneficia de 16-bit
+        0x48,
+        GAIN_TWOTHIRDS,     // Ganancia media para rango típico de sensores de presión
+        1000,               // Intervalo
+        0.5f,               // Voltaje mínimo del sensor (0.5V)
+        4.5f,               // Voltaje máximo del sensor (4.5V)
+        0.0f,               // Presión mínima (ajustar según sensor)
+        100.0f,             // Presión máxima (ajustar según sensor)
+        0b0001,            // Solo canal 0 activo
+        128,                // Sample rate
+        10,                 // Número de muestras para promediar
+        50                  // Historial
     );
 #endif
 
@@ -158,6 +176,9 @@ void setup() {
     #elif defined(MODE_TEMP)
         Serial.println(">>> MODO: TEMPERATURA PT100 <<<");
         sensorDriver = new TempADSManager(config);
+    #elif defined(MODE_PRESS)
+        Serial.println(">>> MODO: PRESIÓN <<<");
+        sensorDriver = new PressADSManager(config); 
     #endif
 
     if (!sensorDriver->begin()) {

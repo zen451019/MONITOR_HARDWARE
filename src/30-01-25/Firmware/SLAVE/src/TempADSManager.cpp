@@ -97,9 +97,9 @@ void TempADSManager::temp_task_trampoline(void* arg) {
 void TempADSManager::temp_task_body() {
     while (true) {
 
-        float Vref = fabsf(getRaw(32));   
-        float Vcable = getRaw(31); 
-        float Vpt100 = getRaw(30); 
+        float Vref = fabsf(getRaw(32, config.NUM_SAMPLES)); // Referencia de voltaje (canal 32)
+        float Vcable = getRaw(31, config.NUM_SAMPLES); 
+        float Vpt100 = getRaw(30, config.NUM_SAMPLES); 
 
         float temperature = -999.0f; // VALOR DE ERROR POR DEFECTO
 
