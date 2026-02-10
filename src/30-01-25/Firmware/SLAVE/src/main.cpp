@@ -88,6 +88,9 @@ ADSBase* sensorDriver = nullptr; // Puntero Polimórfico
 uint16_t holdingRegisters[NUM_REGISTERS];
 SemaphoreHandle_t dataMutex;
 
+// Variable de estado del sistema
+bool systemInitialized = false;  // ← NUEVA VARIABLE
+
 struct SensorData {
     uint16_t sensorID = 1;
     uint16_t numberOfChannels = NUM_CHANNELS;
@@ -181,13 +184,7 @@ void setup() {
         sensorDriver = new PressADSManager(config); 
     #endif
 
-    if (!sensorDriver->begin()) {
-        Serial.println("Error iniciando sensor");
-        while(1);
-    }
-    
-    Serial.println("ADS1015 inicializado correctamente");
-    
+    // Inicializar Modbus primero (siempre responde)
     RTUutils::prepareHardwareSerial(ModbusSerial);
     ModbusSerial.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN);
     MBserver.registerWorker(SLAVE_ID, READ_HOLD_REGISTER, &readHoldingRegistersWorker);
@@ -195,7 +192,33 @@ void setup() {
     
     dataMutex = xSemaphoreCreateMutex();
     
-    sensorDriver->startSampling();
+    // Intentar inicializar el sensor I2C
+    if (!sensorDriver->begin()) {
+        Serial.println("ERROR: Fallo en comunicación I2C con ADS");
+        Serial.println("Llenando buffer con valor de error (255)");
+        
+        // Llenar todos los registros con 255 (indicador de fallo)
+        if (xSemaphoreTake(dataMutex, portMAX_DELAY) == pdTRUE) {
+            for (int i = 0; i < NUM_REGISTERS; i++) {
+                holdingRegisters[i] = 255;
+            }
+            xSemaphoreGive(dataMutex);
+        }
+        
+        Serial.println("Sistema en modo ERROR - Modbus responderá con valores 255");
+        systemInitialized = false;  // ← MARCAR COMO NO INICIALIZADO
+        
+        // NO iniciar tareas de muestreo ni actualización
+        // El sistema queda en espera, solo responde Modbus con valores de error
+        return;
+    }
+    else {
+        Serial.println("ADS inicializado correctamente");
+        
+        // Solo si begin() fue exitoso, iniciar el muestreo y las tareas
+        sensorDriver->startSampling();
+        systemInitialized = true;  // ← MARCAR COMO INICIALIZADO
+    }
     xTaskCreatePinnedToCore(dataUpdateTask, "ModbusUpdate", 2048, NULL, 1, NULL, 0);
     
     Serial.println("Sistema listo - Iniciando muestreo...");
@@ -204,10 +227,13 @@ void setup() {
 void loop() {
     vTaskDelay(pdMS_TO_TICKS(5000));
     
-    // --- CAMBIO AQUÍ: getLatestRMS -> getLatest ---
-    // El método es agnóstico, no importa si devuelve RMS o Temp
-    Serial.printf("CH0: %.1f | CH1: %.1f | CH2: %.1f V\n",
-                  sensorDriver->getLatest(0),
-                  sensorDriver->getLatest(1),
-                  sensorDriver->getLatest(2));
+    // Solo imprimir si el sistema fue inicializado correctamente
+    if (systemInitialized) {
+        Serial.printf("CH0: %.1f | CH1: %.1f | CH2: %.1f V\n",
+                      sensorDriver->getLatest(0),
+                      sensorDriver->getLatest(1),
+                      sensorDriver->getLatest(2));
+    } else {
+        Serial.println("Sistema en ERROR - I2C no disponible");
+    }
 }
