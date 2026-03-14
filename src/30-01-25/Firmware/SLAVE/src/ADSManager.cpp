@@ -50,21 +50,36 @@ void IRAM_ATTR ADSManager::isr_handler(void* arg) {
 
 // ===== BEGIN =====
 bool ADSManager::begin() {
+    Serial.println("ADSManager::begin() - Inicializando ADS...");
+    
     if (!initADS()) {
+        Serial.println("ERROR: initADS() falló");
         return false;
     }
     
+    Serial.println("ADSManager: ADS inicializado correctamente");
+    
+    // Configurar velocidad de muestreo según el tipo de ADS
     if (config.type == ADSType::ADS1015) {
         ads->setDataRate(RATE_ADS1015_3300SPS);
+        Serial.println("ADSManager: Configurado para ADS1015 @ 3300 SPS");
     } else {
         ads->setDataRate(RATE_ADS1115_860SPS);
+        Serial.println("ADSManager: Configurado para ADS1115 @ 860 SPS");
     }
     
+    // NOTA: No usamos interrupción ALERT, usamos polling para mayor confiabilidad
+    // Si en el futuro quieres habilitar ALERT, descomenta esta sección:
+    /*
     if (config.alert_pin != -1) {
         pinMode(config.alert_pin, INPUT_PULLUP);
         attachInterruptArg(digitalPinToInterrupt(config.alert_pin), isr_handler, this, FALLING);
+        ads->startComparator_SingleEnded(0, 32767);
+        Serial.printf("ADSManager: ALERT configurado en pin %d\n", config.alert_pin);
     }
+    */
     
+    Serial.println("ADSManager: Inicialización completada");
     return true;
 }
 
@@ -81,13 +96,12 @@ void ADSManager::acquisition_task_body() {
     ads->startADCReading(ADS1X15_REG_CONFIG_MUX_SINGLE_0, false);
     
     while (true) {
-        if (data_ready) {
-            data_ready = false;
-            
+        // POLLING: Verificamos si la conversión está lista leyendo el registro de configuración
+        if (ads->conversionComplete()) {
             ADCSample sample;
             sample.value = ads->getLastConversionResults();
             sample.channel = current_channel;
-            
+             
             xQueueSend(sample_queue, &sample, 0);
             
             current_channel = (current_channel + 1) % config.num_channels;
@@ -100,9 +114,10 @@ void ADSManager::acquisition_task_body() {
                 default: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_0; break;
             }
             ads->startADCReading(mux_config, false);
-        } else {
-            vTaskDelay(1);
         }
+        
+        // Delay mínimo para no saturar el CPU pero mantener velocidad
+        vTaskDelay(pdMS_TO_TICKS(1));  // 1ms es suficiente, el ADS tarda ~0.3ms por muestra a 3300 SPS
     }
 }
 

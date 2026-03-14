@@ -26,7 +26,7 @@ protected:
     
     // Métodos PROTEGIDOS (solo accesibles por clases hijas)
     bool initADS() {
-        if (!ads->begin(base_config.i2c_addr)) {
+        if (!ads->begin(base_config.i2c_addr, &Wire)) {
             return false;
         }
         ads->setGain(base_config.gain);

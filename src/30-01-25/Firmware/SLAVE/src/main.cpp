@@ -15,7 +15,7 @@
 // ===== SELECCIÓN DE MODO =====
 // Descomenta UNO de los dos para elegir el modo (o úsalo desde platformio.ini)
 // #define MODE_RMS
-#define MODE_TEMP  // <--- En este ejemplo activamos Temperatura
+#define MODE_RMS  // <--- En este ejemplo activamos Temperatura
 
 #if defined(MODE_RMS)
     #include "ADSManager.h"
@@ -39,7 +39,7 @@ ModbusServerRTU MBserver(2000);
 
 // ===== CONFIGURACIÓN ADS =====
 #if defined(MODE_RMS)
-    const float CONVERSION_FACTORS[] = {0.653f, 0.679f, 1.133f};
+    const float CONVERSION_FACTORS[] = {0.653f, 0.937f, 0.979f};
     ADSConfig config(
         ADSType::ADS1015,   // RMS puede usar el modelo más rápido (1015)
         0x48,
@@ -169,8 +169,26 @@ void setup() {
     delay(1000); 
     Serial.println("Sistema Modbus + ADSManager (Refactorizado)");
     
-    Wire.begin(); 
-    Wire.setClock(400000L);
+    // SDA=21, SCL=22 son los pines por defecto en ESP32 estándar.
+    // Inicializamos Wire UNA sola vez aquí. La librería Adafruit reutilizará esta instancia.
+    Wire.begin(21, 22); 
+    Wire.setClock(100000L);
+    delay(50); // Dar tiempo al bus I2C para estabilizarse
+    
+    // ===== I2C SCANNER (DIAGNÓSTICO) =====
+    Serial.println("Escaneando bus I2C...");
+    bool deviceFound = false;
+    for (uint8_t addr = 1; addr < 75; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("  Dispositivo I2C encontrado en 0x%02X\n", addr);
+            deviceFound = true;
+        }
+    }
+    if (!deviceFound) {
+        Serial.println("  NINGÚN dispositivo I2C detectado! Revisar cableado SDA/SCL y pull-ups.");
+    }
+    Serial.println("Scan I2C completo.");
     
     // ===== INSTANCIACIÓN CONDICIONAL =====
     #if defined(MODE_RMS)
@@ -225,15 +243,18 @@ void setup() {
 }
 
 void loop() {
+    static int i2cErrorCount = 0;
+    const int MAX_I2C_ERRORS = 3;  // 3 fallos consecutivos = reinicio
+    
     vTaskDelay(pdMS_TO_TICKS(5000));
     
-    // Solo imprimir si el sistema fue inicializado correctamente
     if (systemInitialized) {
         Serial.printf("CH0: %.1f | CH1: %.1f | CH2: %.1f V\n",
                       sensorDriver->getLatest(0),
                       sensorDriver->getLatest(1),
                       sensorDriver->getLatest(2));
     } else {
-        Serial.println("Sistema en ERROR - I2C no disponible");
+        // Sistema en modo ERROR desde el inicio
+        Serial.println("Sistema en ERROR - I2C no disponible desde inicio");
     }
 }
