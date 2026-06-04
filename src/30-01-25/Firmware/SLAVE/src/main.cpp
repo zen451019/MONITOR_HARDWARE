@@ -39,7 +39,7 @@ ModbusServerRTU MBserver(2000);
 
 // ===== CONFIGURACIÓN ADS =====
 #if defined(MODE_RMS)
-    const float CONVERSION_FACTORS[] = {0.653f, 0.937f, 0.979f};
+    const float CONVERSION_FACTORS[] = {0.676f, 0.981f, 0.979f};
     ADSConfig config(
         ADSType::ADS1015,   // RMS puede usar el modelo más rápido (1015)
         0x48,
@@ -49,7 +49,7 @@ ModbusServerRTU MBserver(2000);
         CONVERSION_FACTORS, // Puntero a los factores de conversión específicos por canal
         19,                 // alert_pin
         3300,               // sampling_rate: 3300 SPS (máximo para ADS1015, para asegurar mediciones rápidas y precisas)
-        320,                // Fifo size: 320 muestras por canal (10 segundos de historial a 330 SPS)
+        1200,               // Fifo size: 1200 muestras (Permite alojar más de 1 segundo de datos reales a >1000 SPS por canal)
         100                 // History size: 100 muestras por canal (para mantener un historial de ~3 segundos a 330 SPS)
     );
 #elif defined(MODE_TEMP)
@@ -172,7 +172,8 @@ void setup() {
     // SDA=21, SCL=22 son los pines por defecto en ESP32 estándar.
     // Inicializamos Wire UNA sola vez aquí. La librería Adafruit reutilizará esta instancia.
     Wire.begin(21, 22); 
-    Wire.setClock(100000L);
+    // Subimos la velocidad I2C a 800kHz (o 400kHz) para acelerar drásticamente la comunicación con el ADS
+    Wire.setClock(800000L);
     delay(50); // Dar tiempo al bus I2C para estabilizarse
     
     // ===== I2C SCANNER (DIAGNÓSTICO) =====
@@ -232,6 +233,9 @@ void setup() {
     }
     else {
         Serial.println("ADS inicializado correctamente");
+        
+        // Forzar I2C de nuevo a alta velocidad luego de que begin() de Adafruit lo resetee a 100k
+        Wire.setClock(800000L); 
         
         // Solo si begin() fue exitoso, iniciar el muestreo y las tareas
         sensorDriver->startSampling();

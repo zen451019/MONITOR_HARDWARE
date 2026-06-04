@@ -95,12 +95,20 @@ void ADSManager::acquisition_task_trampoline(void* arg) {
 void ADSManager::acquisition_task_body() {
     ads->startADCReading(ADS1X15_REG_CONFIG_MUX_SINGLE_0, false);
     
+    // Contadores para medir SPS por canal
+    uint32_t samples_count[4] = {0, 0, 0, 0};
+    TickType_t last_debug_time = xTaskGetTickCount();
+    
     while (true) {
         // POLLING: Verificamos si la conversión está lista leyendo el registro de configuración
         if (ads->conversionComplete()) {
             ADCSample sample;
             sample.value = ads->getLastConversionResults();
             sample.channel = current_channel;
+             
+            if (current_channel < 4) {
+                samples_count[current_channel]++;
+            }
              
             xQueueSend(sample_queue, &sample, 0);
             
@@ -111,13 +119,27 @@ void ADSManager::acquisition_task_body() {
                 case 0: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_0; break;
                 case 1: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_1; break;
                 case 2: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_2; break;
+                case 3: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_3; break;
                 default: mux_config = ADS1X15_REG_CONFIG_MUX_SINGLE_0; break;
             }
             ads->startADCReading(mux_config, false);
         }
         
-        // Delay mínimo para no saturar el CPU pero mantener velocidad
-        vTaskDelay(pdMS_TO_TICKS(1));  // 1ms es suficiente, el ADS tarda ~0.3ms por muestra a 3300 SPS
+        // Debug cada segundo
+        TickType_t current_time = xTaskGetTickCount();
+        if ((current_time - last_debug_time) >= pdMS_TO_TICKS(1000)) {
+            uint32_t total = samples_count[0] + samples_count[1] + samples_count[2] + samples_count[3];
+            Serial.printf("SPS -> C0: %u, C1: %u, C2: %u, C3: %u | Total: %u\n", 
+                          samples_count[0], samples_count[1], samples_count[2], samples_count[3], total);
+            
+            // Reiniciar contadores y actualizar tiempo
+            samples_count[0] = 0; samples_count[1] = 0; samples_count[2] = 0; samples_count[3] = 0;
+            last_debug_time = current_time;
+        }
+        
+        // Pequeño delay de 50 microsegundos en lugar de 1 tick (1ms) para alcanzar máxima velocidad
+        delayMicroseconds(50);
+        taskYIELD(); // Permite que otras tareas de igual prioridad se ejecuten
     }
 }
 
