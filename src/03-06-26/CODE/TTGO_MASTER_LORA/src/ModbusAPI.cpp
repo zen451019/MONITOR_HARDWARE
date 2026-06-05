@@ -91,10 +91,11 @@ static void modbus_worker_task(void* pvParameters) {
 
 // --- Implementación de las funciones públicas ---
 
-void modbus_api_init(HardwareSerial& uart_port, int rx_pin, int tx_pin) {
+void modbus_api_init(HardwareSerial& uart_port, int rx_pin, int tx_pin,
+                     unsigned long baud_rate, uint32_t uart_config) {
     // Configurar UART
     RTUutils::prepareHardwareSerial(uart_port);
-    uart_port.begin(19200, SERIAL_8N1, rx_pin, tx_pin);
+    uart_port.begin(baud_rate, uart_config, rx_pin, tx_pin);
 
     // Configurar cliente Modbus
     MB.onDataHandler(&handle_data_callback);

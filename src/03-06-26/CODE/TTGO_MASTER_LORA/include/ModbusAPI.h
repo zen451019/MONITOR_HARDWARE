@@ -39,7 +39,8 @@ struct ModbusApiResult {
  * @param rx_pin Pin RX para la comunicación RS485.
  * @param tx_pin Pin TX para la comunicación RS485.
  */
-void modbus_api_init(HardwareSerial& uart_port, int rx_pin, int tx_pin);
+void modbus_api_init(HardwareSerial& uart_port, int rx_pin, int tx_pin,
+                     unsigned long baud_rate = 19200, uint32_t uart_config = SERIAL_8N1);
 
 /**
  * @brief Realiza una solicitud Modbus de lectura y espera la respuesta de forma síncrona.
