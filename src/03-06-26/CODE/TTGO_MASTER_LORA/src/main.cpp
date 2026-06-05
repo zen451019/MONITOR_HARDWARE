@@ -13,11 +13,15 @@
 #include <vector>
 #include <cstdint>      ///< Necesario para definiciones de tipos enteros de tamaño fijo (uint8_t, etc).
 #include <map>          ///< Estructura de datos para mapeo de sensores.
+#include <set>          ///< Conjunto de IDs de sensores prioritarios.
 #include <ctime>        ///< Utilizado para la generación de timestamps UNIX.
 #include <cstring>      ///< Utilidades de memoria (memcpy).
 #include <algorithm>
 #include "ModbusClientRTU.h"
 #include "ModbusAPI.h"
+#include "loraconfig.h"
+#include "SensorRegistry.h"
+#include "Log.h"
 
 // =================================================================================================
 // Forward Declarations
@@ -176,18 +180,20 @@ static void flushUartRx(HardwareSerial& s) {
 /**
  * @brief Procesa una solicitud de muestreo para un sensor específico.
  * @details Realiza la lectura Modbus, formatea los datos en caso de éxito,
- * o gestiona el contador de fallos en caso de error.
+ * o gestiona el contador de fallos en caso de error. NO elimina al esclavo:
+ * si alcanza el máximo de fallos, devuelve false para que el scheduler
+ * haga la limpieza atómica bajo el mutex.
  * @param item El elemento del planificador a procesar.
- * @return true si el esclavo asociado sigue activo, false si fue eliminado por fallos.
+ * @return true si el esclavo asociado sigue activo, false si debe ser removido.
  */
 bool handleScheduledSensor(const SensorSchedule& item) {
     const uint8_t MAX_CONSECUTIVE_FAILS = 3;
 
-    Serial.printf("Solicitando muestreo: SlaveID=%u, SensorID=%u\n", item.slaveID, item.sensorID);
+    LOG_D("Solicitando muestreo: SlaveID=%u, SensorID=%u", item.slaveID, item.sensorID);
 
     uint16_t startAddr, numRegs;
     if (!getSensorParams(item.slaveID, item.sensorID, startAddr, numRegs)) {
-        Serial.printf("Error: No se encontraron parámetros para Esclavo %u, Sensor %u.\n", item.slaveID, item.sensorID);
+        LOG_E("No se encontraron parámetros para Esclavo %u, Sensor %u", item.slaveID, item.sensorID);
         return true;
     }
 
@@ -196,9 +202,12 @@ bool handleScheduledSensor(const SensorSchedule& item) {
 
     ModbusApiResult result = modbus_api_read_registers(item.slaveID, READ_HOLD_REGISTER, startAddr, numRegs, 2000);
 
+    // slaveList se modifica fuera del mutex; debemos ser cuidadosos.
+    // handleScheduledSensor SOLO lee/incrementa el contador de fallos;
+    // la eliminación la hace el scheduler bajo el mutex.
     auto slaveIt = std::find_if(slaveList.begin(), slaveList.end(), [&](const ModbusSlaveParam& s) { return s.slaveID == item.slaveID; });
     if (slaveIt == slaveList.end()) {
-        // El esclavo fue eliminado por otra operación, no hay nada que hacer.
+        // El esclavo fue removido por otra operación concurrente.
         return false;
     }
 
@@ -206,31 +215,34 @@ bool handleScheduledSensor(const SensorSchedule& item) {
         formatAndEnqueueSensorData(result, item.slaveID, item.sensorID);
         slaveIt->consecutiveFails = 0;
     } else {
-        Serial.printf("Error en muestreo para Esclavo %u, Sensor %u. Código: %u\n", item.slaveID, item.sensorID, static_cast<uint8_t>(result.error_code));
+        LOG_W("Muestreo fallido para Esclavo %u, Sensor %u. Código: %u", item.slaveID, item.sensorID, static_cast<uint8_t>(result.error_code));
         slaveIt->consecutiveFails++;
-        Serial.printf("Fallo consecutivo %u para esclavo %u.\n", slaveIt->consecutiveFails, item.slaveID);
-        
+        LOG_W("Fallo consecutivo %u para esclavo %u", slaveIt->consecutiveFails, item.slaveID);
+
         if (slaveIt->consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
-            Serial.printf("Esclavo %u ha alcanzado el máximo de fallos. Eliminando...\n", item.slaveID);
-            slaveList.erase(slaveIt);
-            return false; // Indica que el esclavo fue eliminado.
+            LOG_E("Esclavo %u alcanzó el máximo de fallos (%u). Será eliminado.", item.slaveID, MAX_CONSECUTIVE_FAILS);
+            return false;
         }
     }
-    return true; // El esclavo sigue activo.
+    return true;
 }
 
-std::vector<uint8_t> dispositivosAConsultar = {1, 2, 3}; ///< Predefined list of Modbus IDs to scan at startup.
+/**
+ * @brief Predefined list of Modbus IDs to scan at startup.
+ * @details Add or remove slave IDs as your bus changes. Order is preserved.
+ */
+constexpr uint8_t kInitialSlaveIds[] = {1, 2, 3};
 
 /**
  * @brief One-shot task for the initial discovery of sensors.
- * @details Iterates over `dispositivosAConsultar`, launches discovery, and then self-deletes.
+ * @details Iterates over `kInitialSlaveIds`, launches discovery, and then self-deletes.
  * @ingroup group_modbus_discovery
  */
 void initialDiscoveryTask(void *pvParameters) {
     Serial.println("--- Tarea de Descubrimiento Inicial: Iniciando ---");
     const TickType_t delayBetweenDevices = pdMS_TO_TICKS(50);
 
-    for (uint8_t deviceId : dispositivosAConsultar) {
+    for (uint8_t deviceId : kInitialSlaveIds) {
         if (discoverDeviceSensors(deviceId)) {
             Serial.printf("Descubrimiento exitoso para el dispositivo %u.\n", deviceId);
         } else {
@@ -264,7 +276,6 @@ void DataRequestScheduler(void *pvParameters) {
     while (true) {
         const uint32_t now = millis();
         TickType_t sleepTime = pdMS_TO_TICKS(1000); // Default si no hay nada
-        bool schedulerNeedsRebuild = false;
 
         // 1) Bajo mutex: seleccionar "due", reprogramar y calcular próximo evento.
         std::vector<SensorSchedule> dueItems;
@@ -298,7 +309,7 @@ void DataRequestScheduler(void *pvParameters) {
                     sleepTime = pdMS_TO_TICKS(nextEventTime - now2);
                 } else if (!dueItems.empty()) {
                     // Si hubo trabajo "due", cede un poco para no saturar
-                    sleepTime = pdMS_TO_TICKS(10);  
+                    sleepTime = pdMS_TO_TICKS(10);
                 } else {
                     sleepTime = pdMS_TO_TICKS(1000);
                 }
@@ -307,24 +318,26 @@ void DataRequestScheduler(void *pvParameters) {
             xSemaphoreGive(schedulerMutex);
         }
 
-        // 2) Fuera del mutex: ejecutar I/O (Modbus). Si algún esclavo cae, marcar rebuild.
+        // 2) Fuera del mutex: ejecutar I/O (Modbus).
         for (const auto& item : dueItems) {
             if (!handleScheduledSensor(item)) {
+                // El esclavo debe ser removido de ambas listas, atómicamente bajo el mutex.
                 if (xSemaphoreTake(schedulerMutex, portMAX_DELAY) == pdTRUE) {
+                    auto slaveIt = std::remove_if(slaveList.begin(), slaveList.end(),
+                        [&](const ModbusSlaveParam& s) { return s.slaveID == item.slaveID; });
+                    slaveList.erase(slaveIt, slaveList.end());
+
                     auto scheduleIt = std::remove_if(scheduleList.begin(), scheduleList.end(),
                         [&](const SensorSchedule& s) { return s.slaveID == item.slaveID; });
                     scheduleList.erase(scheduleIt, scheduleList.end());
-                    Serial.printf("[Scheduler] Tareas del esclavo %u eliminadas del planificador.\n", item.slaveID);
+
+                    refreshSystemContext();
+
+                    LOG_W("Esclavo %u removido de slaveList y scheduleList.", item.slaveID);
                     xSemaphoreGive(schedulerMutex);
                 }
-                schedulerNeedsRebuild = false; 
-                break; 
+                break;
             }
-        }
-
-        // 3) Rebuild fuera del mutex (solo si es estrictamente necesario por otra razón)
-        if (schedulerNeedsRebuild) {
-            initScheduler();
         }
 
         vTaskDelay(sleepTime);
@@ -459,47 +472,9 @@ bool discoverDeviceSensors(uint8_t deviceId) {
 }
 
 // ==================== BIT PACKER ====================
-/**
- * @struct BitPacker
- * @brief Utility for packing arbitrary bits into a byte stream.
- * @details Allows data compression when `compressedBytes` > 0.
- * @ingroup group_data_format
- */
-struct BitPacker
-{
-    uint64_t buffer = 0; ///< Temporary accumulator of up to 64 bits.
-    int bits_usados = 0; ///< Counter of valid bits in the buffer.
-
-    void push(uint16_t valor, int nbits, std::vector<uint8_t> &out)
-    {
-        // desplazar buffer para dejar espacio
-        buffer <<= nbits;
-        // quedarnos con solo los bits válidos
-        buffer |= (valor & ((1ULL << nbits) - 1));
-        bits_usados += nbits;
-
-        // mientras tengamos al menos 8 bits, sacar bytes
-        while (bits_usados >= 8)
-        {
-            int shift = bits_usados - 8;
-            uint8_t byte = (buffer >> shift) & 0xFF;
-            out.push_back(byte);
-            bits_usados -= 8;
-            buffer &= (1 << bits_usados) - 1; // limpiar bits ya usados
-        }
-    }
-
-    void flush(std::vector<uint8_t> &out)
-    {
-        if (bits_usados > 0)
-        {
-            uint8_t byte = buffer << (8 - bits_usados);
-            out.push_back(byte);
-            bits_usados = 0;
-            buffer = 0;
-        }
-    }
-};
+// (Removed in Phase 1. The 1-read-1-value model doesn't need a multi-register
+// bit packer. If Phase 2 ever needs to pack multi-channel values back into
+// a single "slot" of the Activate Byte, reintroduce a per-slot helper here.)
 
 /**
  * @def MAX_SENSOR_PAYLOAD
@@ -554,40 +529,24 @@ static bool formatAndEnqueueSensorData(const ModbusApiResult& response, uint8_t 
 
     uint8_t dataType = params.dataType; // 1=uint8, 2=uint16
     uint8_t scale = params.scale;
-    uint8_t compressedBytes = params.compressedBytes;
 
     values.clear();
-    if (compressedBytes > 0) {
-        BitPacker packer;
-        for (size_t i = 0; i < params.maxRegisters; ++i) {
-            size_t offset = i * 2;
-            if ((offset + 1) >= response.data_len) {
-                break;
-            }
-            uint8_t high = response.data[offset];
-            uint8_t low  = response.data[offset + 1];
-            uint16_t raw = (static_cast<uint16_t>(high) << 8) | low;
-            packer.push(raw, compressedBytes, values);
+    for (size_t i = 0; i < params.maxRegisters; ++i) {
+        size_t offset = i * 2;
+        if ((offset + 1) >= response.data_len) {
+            break;
         }
-        packer.flush(values);
-    } else {
-        for (size_t i = 0; i < params.maxRegisters; ++i) {
-            size_t offset = i * 2;
-            if ((offset + 1) >= response.data_len) {
-                break;
-            }
-            uint8_t high = response.data[offset];
-            uint8_t low  = response.data[offset + 1];
+        uint8_t high = response.data[offset];
+        uint8_t low  = response.data[offset + 1];
 
-            if (dataType == 1) {            // uint8 -> solo byte bajo
-                values.push_back(low);
-            } else if (dataType == 2) {     // uint16 -> alto seguido del bajo
-                values.push_back(high);
-                values.push_back(low);
-            } else {                        // por defecto mantener big-endian
-                values.push_back(high);
-                values.push_back(low);
-            }
+        if (dataType == 1) {            // uint8 -> solo byte bajo
+            values.push_back(low);
+        } else if (dataType == 2) {     // uint16 -> alto seguido del bajo
+            values.push_back(high);
+            values.push_back(low);
+        } else {                        // por defecto mantener big-endian
+            values.push_back(high);
+            values.push_back(low);
         }
     }
     
@@ -640,20 +599,6 @@ void DataPrinterTask(void *pvParameters) {
         }
     }
 }
-
-// --- Mapping of Sensor ID to Activate Byte Bits ---
-// IMPORTANT! You must adjust these IDs to the ones used in your system.
-// These are just examples based on the context.
-const uint8_t SENSOR_ID_BATERIA = 0;   ///< Assigned to Bit 0 of the Activate Byte.
-const uint8_t SENSOR_ID_VOLTAJE = 1;   ///< Assigned to Bit 1 of the Activate Byte.
-const uint8_t SENSOR_ID_CORRIENTE = 2; ///< Assigned to Bit 2 of the Activate Byte.
-const uint8_t SENSOR_ID_EXT_START = 3; ///< Start of IDs for external sensors (Bits 3-7).
-const int MAX_SENSORES_EXTERNOS = 5;   ///< Number of remaining available bits (3 to 7).
-
-// --- CONFIGURACIÓN DE PRIORIDAD ---
-// Define QUÉ sensores tienen rol de "Conductor" (Bus Driver).
-// Puedes agregar o quitar IDs aquí sin tocar el resto de la lógica.
-const std::vector<uint8_t> DEFINED_PRIORITY_IDS = { SENSOR_ID_VOLTAJE, SENSOR_ID_CORRIENTE };
 
 // --- ESTADO DEL SISTEMA (DINÁMICO) ---
 // Almacena qué sensores prioritarios están INSTALADOS actualmente entres todos los esclavos.
@@ -800,31 +745,6 @@ std::vector<uint8_t> construirPayloadUnificado(
 //#define DISABLE_RX 1
 //#define CFG_sx1272_radio 1
 
-/**
- * @brief LMIC configuration functions (placeholders).
- * @ingroup group_lorawan
- */
-void os_getArtEui(u1_t *buf) { memset(buf, 0, 8); }
-void os_getDevEui(u1_t *buf) { memset(buf, 0, 8); }
-void os_getDevKey(u1_t *buf) { memset(buf, 0, 16); }
-
-/**
- * @brief ABP keys and device address (DEMO).
- * @warning Keys in plaintext, replace in production.
- * @ingroup group_lorawan
- */
-static u1_t NWKSKEY[16] = {
-    0xC2, 0x5B, 0x0A, 0x78, 0xA8, 0x0A, 0x63, 0x1D,
-    0x86, 0xC8, 0x1B, 0xA3, 0x3A, 0x9E, 0x36, 0xEF
-};
-
-static u1_t APPSKEY[16] = {
-    0x42, 0x8F, 0x67, 0xFA, 0xD7, 0xD7, 0x4A, 0x85,
-    0x3C, 0x10, 0x80, 0x5F, 0x10, 0x1A, 0x0E, 0x14
-};
-
-static const u4_t DEVADDR = 0x260C691F;
-
 // LoRa Pin Configuration
 ///**
 // * @brief Pin map for the SX127x radio of the TTGO LoRa32.
@@ -867,11 +787,11 @@ struct Fragmento {
  */
 void onEvent(ev_t ev) {
     if (ev == EV_TXCOMPLETE) {
-        Serial.println("[LORA] TX completo.");
+        LOG_I("LoRa: TX completo.");
         // Libera el semáforo para indicar que el ciclo de transmisión ha terminado.
         xSemaphoreGive(semaforoEnvioCompleto);
         if (LMIC.txrxFlags & TXRX_ACK) {
-            Serial.println("[LORA] ACK recibido.");
+            LOG_I("LoRa: ACK recibido.");
         }
     }
 }
@@ -915,17 +835,18 @@ void tareaLoRa(void *pvParameters) {
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
             // Espera semáforo antes de enviar
             xSemaphoreTake(semaforoEnvioCompleto, portMAX_DELAY);
-            Serial.printf("[LORA] Enviando fragmento de %u bytes...\n", frag.len);
-            Serial.println("[LORA] Datos:");
-            for (size_t i = 0; i < frag.len; i++) {
-                Serial.print("0x");
-                if (frag.data[i] < 0x10) Serial.print("0");
-                Serial.print(frag.data[i], HEX);
-                Serial.print(",");
+            LOG_I("LoRa: enviando fragmento de %u bytes", frag.len);
+            if (LOG_LEVEL >= 4) {
+                for (size_t i = 0; i < frag.len; i++) {
+                    Serial.print("0x");
+                    if (frag.data[i] < 0x10) Serial.print("0");
+                    Serial.print(frag.data[i], HEX);
+                    Serial.print(",");
+                }
+                Serial.println();
             }
             LMIC_setTxData2(1, frag.data, frag.len, 0);
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // sólo lógica propia, no runloop
     }
 }
 
@@ -1004,11 +925,11 @@ void DataAggregatorTask(void *pvParameters) {
                 // SI el sistema tiene MÁS de un tipo de sensor prioritario instalado (ej. V + I),
                 // Y acaba de llegar uno de ellos -> ESPERAMOS al resto.
                 if (numPriorityTypesActive > 1) {
-                    Serial.printf("[Agregador] Prioridad recibida (%u). Sistema tiene múltiples prioridades (%u). Esperando agrupación...\n", 
-                                  incomingPayload.sensorId, numPriorityTypesActive);
-                    
+                    LOG_D("Prioridad %u recibida. Múltiples prioridades activas (%u). Esperando agrupación...",
+                          incomingPayload.sensorId, numPriorityTypesActive);
+
                     vTaskDelay(GRACE_PERIOD_MS);
-                    
+
                     // Recoger rezagados
                     while (xQueueReceive(queueSensorDataPayload, &incomingPayload, 0) == pdTRUE) {
                         bool rep = false;
@@ -1022,36 +943,35 @@ void DataAggregatorTask(void *pvParameters) {
                 } else {
                     // Si numPriorityTypesActive es 1, significa que solo hay Voltaje (o solo Corriente) instalado.
                     // No tiene sentido esperar a nadie más. ¡Sale el bus!
-                    Serial.println("[Agregador] Prioridad recibida (Única activa). Enviando inmediatamente.");
+                    LOG_D("Prioridad única activa. Enviando inmediatamente.");
                 }
-                
+
                 triggerSend = true;
-            } 
+            }
             else if (pendingBuffer.size() >= 8) {
-                Serial.println("[Agregador] Buffer lleno. Forzando salida.");
+                LOG_W("Buffer del agregador lleno. Forzando salida.");
                 triggerSend = true;
             }
 
             // 3. Envío
             if (triggerSend && !pendingBuffer.empty()) {
-                 Serial.printf("[Agregador] Enviando paquete con %u items.\n", pendingBuffer.size());
+                 LOG_I("Enviando paquete con %u items.", pendingBuffer.size());
                  std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
-                 
+
                  Fragmento loraFragment;
                  loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
                  memcpy(loraFragment.data, unifiedPayload.data(), loraFragment.len);
-                 
+
                  if (xQueueSend(queueFragmentos, &loraFragment, pdMS_TO_TICKS(100)) == pdTRUE) {
                     pendingBuffer.clear();
                     lastSendTime = xTaskGetTickCount();
                  }
             }
-        } 
+        }
         else {
             // Timeout logic... (igual que antes)
              if (!pendingBuffer.empty()) {
-                 // ... timeout send logic ...
-                 Serial.println("[Agregador] Timeout Agregador. Enviando.");
+                 LOG_W("Timeout del agregador. Forzando envío.");
                  std::vector<uint8_t> unifiedPayload = construirPayloadUnificado(ID_MSG++, pendingBuffer);
                  Fragmento loraFragment;
                  loraFragment.len = std::min(unifiedPayload.size(), LORA_PAYLOAD_MAX);
@@ -1067,8 +987,11 @@ void DataAggregatorTask(void *pvParameters) {
 // ==================== SETUP AND LOOP ====================
 void setup() {
     Serial.begin(115200); // 115200 es más estándar y estable que 921600
-    while (!Serial); // Espera a que el puerto serie esté listo
-    delay(5000);
+    // Espera hasta 3 s a que el puerto serie esté listo. Si no, sigue de todas formas.
+    {
+        const uint32_t t0 = millis();
+        while (!Serial && (millis() - t0) < 3000) { delay(10); }
+    }
     Serial.println("Iniciando sistema...");
 
     // Inicialización SPI
@@ -1249,29 +1172,21 @@ void unregisterSlave(uint8_t slaveId) {
  */
 void refreshSystemContext() {
     activePrioritySensors.clear();
-    
-    // Usamos un set temporal para evitar duplicados si hay varios esclavos con el mismo tipo de sensor
-    std::vector<uint8_t> foundIds;
 
+    std::set<uint8_t> foundIds;
     for (const auto& slave : slaveList) {
         for (const auto& sensor : slave.sensors) {
             if (isConfiguredPriority(sensor.sensorID)) {
-                // Verificar si ya lo anotamos
-                bool alreadyInList = false;
-                for(uint8_t id : foundIds) { if(id == sensor.sensorID) alreadyInList = true; }
-                
-                if (!alreadyInList) {
-                    foundIds.push_back(sensor.sensorID);
-                }
+                foundIds.insert(sensor.sensorID);
             }
         }
     }
-    
-    // Copiar al estado global
-    activePrioritySensors = foundIds;
-    
-    Serial.print("[Contexto] Prioridades Activas: ");
-    if (activePrioritySensors.empty()) Serial.print("Ninguna");
-    for (uint8_t id : activePrioritySensors) Serial.printf("[%u] ", id);
-    Serial.println();
+
+    activePrioritySensors.assign(foundIds.begin(), foundIds.end());
+
+    LOG_I("Prioridades Activas: %s", activePrioritySensors.empty() ? "Ninguna" : "");
+    for (uint8_t id : activePrioritySensors) {
+        Serial.printf("[%u] ", id);
+    }
+    if (!activePrioritySensors.empty()) Serial.println();
 }
