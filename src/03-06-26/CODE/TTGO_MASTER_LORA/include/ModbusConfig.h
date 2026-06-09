@@ -67,14 +67,14 @@ struct ModbusRequest {
 #define DEV_PANEL 2
 
 const ModbusRequest kRequests[] = {
-    // --- Esclavo 1: Voltajes (3 líneas) ---
-    {DEV_VCC,   0x0000, 2, 0, SENSOR_ID_VOLTAJE},
-    {DEV_VCC,   0x0002, 2, 1, SENSOR_ID_VOLTAJE},
-    {DEV_VCC,   0x0004, 2, 2, SENSOR_ID_VOLTAJE},
-    // --- Esclavo 1: Corrientes (3 líneas) ---
-    {DEV_VCC,   0x0006, 2, 0, SENSOR_ID_CORRIENTE},
-    {DEV_VCC,   0x0008, 2, 1, SENSOR_ID_CORRIENTE},
-    {DEV_VCC,   0x000A, 2, 2, SENSOR_ID_CORRIENTE},
+    // --- Esclavo 1: Voltajes (3 líneas, 1 int16 c/u) ---
+    {DEV_VCC,   0x0000, 1, 0, SENSOR_ID_VOLTAJE},
+    {DEV_VCC,   0x0002, 1, 1, SENSOR_ID_VOLTAJE},
+    {DEV_VCC,   0x0004, 1, 2, SENSOR_ID_VOLTAJE},
+    // --- Esclavo 1: Corrientes (3 líneas, 1 int16 c/u) ---
+    {DEV_VCC,   0x0006, 1, 0, SENSOR_ID_CORRIENTE},
+    {DEV_VCC,   0x0008, 1, 1, SENSOR_ID_CORRIENTE},
+    {DEV_VCC,   0x000A, 1, 2, SENSOR_ID_CORRIENTE},
     // --- Esclavo 2: Batería ---
     {DEV_PANEL, 0x0100, 2, 0, SENSOR_ID_BATERIA},
 };
