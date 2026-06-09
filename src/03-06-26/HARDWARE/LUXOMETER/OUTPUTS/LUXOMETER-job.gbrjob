@@ -5,7 +5,7 @@
       "Application": "Pcbnew",
       "Version": "10.0.1"
     },
-    "CreationDate": "2026-06-06T09:12:29-05:00"
+    "CreationDate": "2026-06-09T08:40:25-05:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
@@ -34,19 +34,9 @@
   ],
   "FilesAttributes": [
     {
-      "Path": "LUXOMETER-B_Cu.gbr",
-      "FileFunction": "Copper,L2,Bot",
-      "FilePolarity": "Positive"
-    },
-    {
-      "Path": "LUXOMETER-F_Silkscreen.gbr",
-      "FileFunction": "Legend,Top",
-      "FilePolarity": "Positive"
-    },
-    {
-      "Path": "LUXOMETER-Edge_Cuts.gbr",
-      "FileFunction": "Profile",
-      "FilePolarity": "Positive"
+      "Path": "LUXOMETER-B_Mask.gbr",
+      "FileFunction": "SolderMask,Bot",
+      "FilePolarity": "Negative"
     }
   ],
   "MaterialStackup": [

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <HardwareSerial.h>
 #include <cmath>
 #include "ModbusServerRTU.h"
 
@@ -20,6 +21,7 @@ const BusConfig kBusCfg = {
 };
 
 // R/D del transceptor RS485 se pasa en el constructor de ModbusServerRTU (ver abajo)
+#define DIAG_LED 2  // GPIO2 = LED onboard (parpadea al recibir solicitud Modbus)
 
 // =================================================================================================
 // Identidad del dispositivo
@@ -91,6 +93,8 @@ void simulatedSensorTask(void* pvParameters) {
 // Worker Modbus
 // =================================================================================================
 ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
+    digitalWrite(DIAG_LED, HIGH);
+
     uint16_t address, words;
     ModbusMessage response;
 
@@ -107,27 +111,51 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
         } else {
             response.setError(request.getServerID(), request.getFunctionCode(), SERVER_DEVICE_BUSY);
         }
+        digitalWrite(DIAG_LED, LOW);
         return response;
     }
 
     response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+    digitalWrite(DIAG_LED, LOW);
     return response;
 }
 
 // =================================================================================================
 // Setup
 // =================================================================================================
+HardwareSerial ModbusSerial(1);       // UART1 para Modbus (evita UART0/USB)
 ModbusServerRTU MBserver(2000, 22);  // timeout=2000ms, rtsPin=22 (R/D)
 
 void setup() {
+    // Inicializar R/D antes que nada (el constructor global podría no tener efecto
+    // por ejecutarse antes de que el HAL GPIO del ESP32 esté listo)
+    pinMode(22, OUTPUT);
+    digitalWrite(22, LOW);
+
+    pinMode(DIAG_LED, OUTPUT);
+    digitalWrite(DIAG_LED, LOW);
+
+    // Parpadeo rápido de confirmación de boot
+    digitalWrite(DIAG_LED, HIGH);
+    delay(100);
+    digitalWrite(DIAG_LED, LOW);
+
     dataMutex = xSemaphoreCreateMutex();
 
-    RTUutils::prepareHardwareSerial(Serial);
-    Serial.begin(kBusCfg.baudRate, kBusCfg.uartConfig, kBusCfg.rxPin, kBusCfg.txPin);
+    RTUutils::prepareHardwareSerial(ModbusSerial);
+    ModbusSerial.begin(kBusCfg.baudRate, kBusCfg.uartConfig, kBusCfg.rxPin, kBusCfg.txPin);
     MBserver.registerWorker(SLAVE_ID, READ_HOLD_REGISTER, &readHoldingRegistersWorker);
-    MBserver.begin(Serial, 0);
+    MBserver.begin(ModbusSerial, 0);
 
     xTaskCreatePinnedToCore(simulatedSensorTask, "SimSensor", 2048, NULL, 1, NULL, 0);
+
+    // 3 parpadeos rápidos = sistema listo
+    for (int i = 0; i < 3; i++) {
+        digitalWrite(DIAG_LED, HIGH);
+        delay(80);
+        digitalWrite(DIAG_LED, LOW);
+        delay(80);
+    }
 }
 
 void loop() {

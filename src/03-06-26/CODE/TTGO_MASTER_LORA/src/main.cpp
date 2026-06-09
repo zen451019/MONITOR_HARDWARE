@@ -297,6 +297,7 @@ void tareaLoRa(void *pvParameters) {
             }
             LMIC_setTxData2(1, frag.data, frag.len, 0);
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -336,7 +337,7 @@ void setup() {
     xTaskCreatePinnedToCore(tareaLoRa,    "LoRaTask", 2048, NULL, 5, NULL, 1);
 
     // Single main polling task — replaces all scheduler/aggregator complexity
-    xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 4096, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 8192, NULL, 3, NULL, 0);
 
     Serial.printf("Configurado: bus a %lu baud, %zu requests, intervalo %lu ms\n",
                   kBusCfg.baudRate, kRequestCount, POLL_INTERVAL_MS);
