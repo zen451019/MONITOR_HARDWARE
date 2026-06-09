@@ -19,7 +19,7 @@ const BusConfig kBusCfg = {
     1    // TX = GPIO1
 };
 
-#define RTS_PIN 22  // R/D del transceptor RS485 (pin único RE+DE)
+// R/D del transceptor RS485 se pasa en el constructor de ModbusServerRTU (ver abajo)
 
 // =================================================================================================
 // Identidad del dispositivo
@@ -117,12 +117,12 @@ ModbusMessage readHoldingRegistersWorker(ModbusMessage request) {
 // =================================================================================================
 // Setup
 // =================================================================================================
-ModbusServerRTU MBserver(2000);
+ModbusServerRTU MBserver(2000, 22);  // timeout=2000ms, rtsPin=22 (R/D)
 
 void setup() {
     dataMutex = xSemaphoreCreateMutex();
 
-    RTUutils::prepareHardwareSerial(Serial, RTS_PIN);
+    RTUutils::prepareHardwareSerial(Serial);
     Serial.begin(kBusCfg.baudRate, kBusCfg.uartConfig, kBusCfg.rxPin, kBusCfg.txPin);
     MBserver.registerWorker(SLAVE_ID, READ_HOLD_REGISTER, &readHoldingRegistersWorker);
     MBserver.begin(Serial, 0);
