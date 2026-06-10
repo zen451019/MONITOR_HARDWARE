@@ -45,9 +45,11 @@ const BusConfig kBusCfg = {
 // 0x09 |   1   | uint16| I L2  | Reservado / histórico
 // 0x0A |   1   | uint16| I L3  | Corriente fase 3
 // 0x0B |   1   | uint16| I L3  | Reservado / histórico
+// 0x0C |   1   | uint16| Ana1  | Sensor analógico 1 (suavizado + tratamiento opcional)
+// 0x0D |   1   | uint16| Ana2  | Sensor analógico 2 (suavizado + tratamiento opcional)
 // =================================================================================================
 
-#define NUM_REGISTERS 12
+#define NUM_REGISTERS 14
 
 // =================================================================================================
 // Sensores simulados
@@ -85,6 +87,83 @@ void simulatedSensorTask(void* pvParameters) {
             xSemaphoreGive(dataMutex);
         }
 
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+}
+
+// =================================================================================================
+// Sensores analógicos (ADC)
+// =================================================================================================
+
+// Cada canal tiene su propio buffer de suavizado (promedio móvil de 4 muestras).
+// El suavizado se aplica siempre. La función de tratamiento es opcional
+// (NULL = se guarda el ADC suavizado tal cual).
+typedef uint16_t (*AnalogTreatmentFn)(uint16_t raw_adc);
+
+struct AnalogChannel {
+    uint8_t             adcPin;
+    uint16_t            regIndex;
+    AnalogTreatmentFn   treatment;
+    uint16_t            history[4];
+    uint8_t             histIdx;
+};
+
+// --- Funciones de tratamiento de ejemplo (copia y modifica según necesites) ---
+
+// Raw: el ADC suavizado sin transformación (0-4095)
+static uint16_t treatment_raw(uint16_t adc) { return adc; }
+
+// mV en bornes de entrada: divisor resistivo 43k/10k, ESP32 ADC 0-3.3V = 0-4095
+// Vout = Vin * 10/(43+10) = Vin * 0.18868
+// ADC = Vout * 4095 / 3300
+// Vin_mV = ADC * 3300 * (43+10) / (4095 * 10) = ADC * 17490 / 4095
+static uint16_t treatment_mv(uint16_t adc) {
+    return (uint16_t)((uint32_t)adc * 17490 / 4095);
+}
+
+// Presión en PSI × 100 (centi-PSI): sensor 0.5-4.5V → 0-1 MPa a través del divisor 43k/10k
+// Fórmula del sensor: Vout = 5(0.8P + 0.1), P en MPa
+// Despejando: P_MPa = (Vout - 0.5) / 4
+// Rango ADC efectivo tras divisor: 117 (0 MPa) → 1054 (1 MPa)
+// 1 MPa = 145.038 PSI → 14504 centi-PSI a fondo de escala
+static uint16_t treatment_pressure_psi(uint16_t adc) {
+    if (adc <= 117) return 0;
+    uint32_t centiPsi = (uint32_t)(adc - 117) * 14504 / 937;
+    return (uint16_t)(centiPsi > 65535 ? 65535 : centiPsi);
+}
+
+// --- Tabla de canales analógicos ---
+// Define aquí: pin ADC, índice del registro Modbus y función de tratamiento.
+// treatment = NULL equivale a treatment_raw (ADC suavizado tal cual).
+AnalogChannel kAnalogChannels[] = {
+    {36, 12, treatment_pressure_psi, {0}, 0},  // GPIO36 → reg 0x0C, presión PSI×100
+    {39, 13, treatment_mv,           {0}, 0},  // GPIO39 → reg 0x0D, voltaje mV
+};
+constexpr size_t kAnalogChannelCount = sizeof(kAnalogChannels) / sizeof(kAnalogChannels[0]);
+
+// Tarea que lee los ADC, aplica suavizado y escribe en holdingRegisters bajo mutex
+void analogSensorTask(void* pvParameters) {
+    while (true) {
+        for (size_t i = 0; i < kAnalogChannelCount; ++i) {
+            AnalogChannel& ch = kAnalogChannels[i];
+
+            // Leer ADC y meter en el buffer circular de 4 muestras
+            uint16_t sample = (uint16_t)analogRead(ch.adcPin);
+            ch.history[ch.histIdx] = sample;
+            ch.histIdx = (ch.histIdx + 1) & 3;
+
+            // Promedio móvil (suavizado)
+            uint16_t smoothed = (uint16_t)((ch.history[0] + ch.history[1] +
+                                            ch.history[2] + ch.history[3]) / 4);
+
+            // Aplicar tratamiento si existe, si no va el suavizado tal cual
+            uint16_t value = ch.treatment ? ch.treatment(smoothed) : smoothed;
+
+            if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                holdingRegisters[ch.regIndex] = value;
+                xSemaphoreGive(dataMutex);
+            }
+        }
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 }
@@ -147,7 +226,8 @@ void setup() {
     MBserver.registerWorker(SLAVE_ID, READ_HOLD_REGISTER, &readHoldingRegistersWorker);
     MBserver.begin(ModbusSerial, 0);
 
-    xTaskCreatePinnedToCore(simulatedSensorTask, "SimSensor", 2048, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(simulatedSensorTask, "SimSensor",  2048, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(analogSensorTask,    "AnaSensor", 2048, NULL, 1, NULL, 0);
 
     // 3 parpadeos rápidos = sistema listo
     for (int i = 0; i < 3; i++) {

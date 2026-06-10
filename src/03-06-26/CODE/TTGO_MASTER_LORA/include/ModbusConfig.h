@@ -77,6 +77,9 @@ const ModbusRequest kRequests[] = {
     {DEV_VCC,   0x000A, 1, 2, SENSOR_ID_CORRIENTE},
     // --- Esclavo 2: Batería ---
     {DEV_PANEL, 0x0100, 2, 0, SENSOR_ID_BATERIA},
+    // --- Esclavo 1: Analógicos (cada uno con su propia bandera) ---
+    {DEV_VCC,   0x000C, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 0)},  // Presión (bit 3)
+    {DEV_VCC,   0x000D, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 1)},  // Voltaje mV (bit 4)
 };
 
 constexpr size_t kRequestCount = sizeof(kRequests) / sizeof(kRequests[0]);

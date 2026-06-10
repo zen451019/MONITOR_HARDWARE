@@ -286,12 +286,13 @@ void tareaLoRa(void *pvParameters) {
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
             xSemaphoreTake(semaforoEnvioCompleto, portMAX_DELAY);
             LOG_I("LoRa: enviando fragmento de %u bytes", frag.len);
-            if (LOG_LEVEL >= 4) {
+            if (LOG_LEVEL >= 3) {
+                Serial.print("[I] Payload: ");
                 for (size_t i = 0; i < frag.len; i++) {
+                    if (i > 0) Serial.print(",");
                     Serial.print("0x");
                     if (frag.data[i] < 0x10) Serial.print("0");
                     Serial.print(frag.data[i], HEX);
-                    Serial.print(",");
                 }
                 Serial.println();
             }
