@@ -38,12 +38,12 @@ struct ModbusDeviceCfg {
     uint32_t timeoutMs;       // per-device timeout override
 };
 
+#define DEV_VCC   10
+#define DEV_PANEL 2
+#define DEV_LUX   1
+
 const ModbusDeviceCfg kDeviceCfg[] = {
-    // Vacío: todos los dispositivos usan los valores por defecto.
-    // Agrega entradas aquí SOLO si un esclavo necesita configuración distinta.
-    //
-    // {1, 0x04, false, 3000},  // Esclavo 1: input registers, timeout de 3s
-    // {2, 0x03, true,  2500},  // Esclavo 2: holding registers + word swap
+    // El luxómetro usa 0x03 (default), no necesita override.
 };
 
 constexpr size_t kDeviceCfgCount = sizeof(kDeviceCfg) / sizeof(kDeviceCfg[0]);
@@ -63,23 +63,22 @@ struct ModbusRequest {
     uint8_t  sensorType;     // SENSOR_ID_VOLTAJE, SENSOR_ID_CORRIENTE, etc.
 };
 
-#define DEV_VCC   1
-#define DEV_PANEL 2
-
 const ModbusRequest kRequests[] = {
-    // --- Esclavo 1: Voltajes (3 líneas, 1 int16 c/u) ---
+    // --- Esclavo 10 (DEV_VCC): Voltajes (3 líneas, 1 int16 c/u) ---
     {DEV_VCC,   0x0000, 1, 0, SENSOR_ID_VOLTAJE},
     {DEV_VCC,   0x0002, 1, 1, SENSOR_ID_VOLTAJE},
     {DEV_VCC,   0x0004, 1, 2, SENSOR_ID_VOLTAJE},
-    // --- Esclavo 1: Corrientes (3 líneas, 1 int16 c/u) ---
+    // --- Esclavo 10: Corrientes (3 líneas, 1 int16 c/u) ---
     {DEV_VCC,   0x0006, 1, 0, SENSOR_ID_CORRIENTE},
     {DEV_VCC,   0x0008, 1, 1, SENSOR_ID_CORRIENTE},
     {DEV_VCC,   0x000A, 1, 2, SENSOR_ID_CORRIENTE},
     // --- Esclavo 2: Batería ---
     {DEV_PANEL, 0x0100, 2, 0, SENSOR_ID_BATERIA},
-    // --- Esclavo 1: Analógicos (cada uno con su propia bandera) ---
+    // --- Esclavo 10: Analógicos (cada uno con su propia bandera) ---
     {DEV_VCC,   0x000C, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 0)},  // Presión (bit 3)
     {DEV_VCC,   0x000D, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 1)},  // Voltaje mV (bit 4)
+    // --- Esclavo 1 (DEV_LUX): Luxómetro industrial, 32-bit (2 regs) ---
+    {DEV_LUX,   0x0002, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 2)},  // Iluminación (bit 5)
 };
 
 constexpr size_t kRequestCount = sizeof(kRequests) / sizeof(kRequests[0]);
