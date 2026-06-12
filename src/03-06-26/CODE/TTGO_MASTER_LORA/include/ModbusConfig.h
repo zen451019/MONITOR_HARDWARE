@@ -38,12 +38,12 @@ struct ModbusDeviceCfg {
     uint32_t timeoutMs;       // per-device timeout override
 };
 
-#define DEV_VCC   10
-#define DEV_PANEL 2
+#define DEV_VCC   5
+#define DEV_SDM   10
 #define DEV_LUX   1
 
 const ModbusDeviceCfg kDeviceCfg[] = {
-    // El luxómetro usa 0x03 (default), no necesita override.
+    {DEV_SDM, 0x04, false, 2000},  // SDM630MCT: input registers, big-endian float
 };
 
 constexpr size_t kDeviceCfgCount = sizeof(kDeviceCfg) / sizeof(kDeviceCfg[0]);
@@ -64,21 +64,17 @@ struct ModbusRequest {
 };
 
 const ModbusRequest kRequests[] = {
-    // --- Esclavo 10 (DEV_VCC): Voltajes (3 líneas, 1 int16 c/u) ---
-    {DEV_VCC,   0x0000, 1, 0, SENSOR_ID_VOLTAJE},
-    {DEV_VCC,   0x0002, 1, 1, SENSOR_ID_VOLTAJE},
-    {DEV_VCC,   0x0004, 1, 2, SENSOR_ID_VOLTAJE},
-    // --- Esclavo 10: Corrientes (3 líneas, 1 int16 c/u) ---
-    {DEV_VCC,   0x0006, 1, 0, SENSOR_ID_CORRIENTE},
-    {DEV_VCC,   0x0008, 1, 1, SENSOR_ID_CORRIENTE},
-    {DEV_VCC,   0x000A, 1, 2, SENSOR_ID_CORRIENTE},
-    // --- Esclavo 2: Batería ---
-    {DEV_PANEL, 0x0100, 2, 0, SENSOR_ID_BATERIA},
-    // --- Esclavo 10: Analógicos (cada uno con su propia bandera) ---
-    {DEV_VCC,   0x000C, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 0)},  // Presión (bit 3)
-    {DEV_VCC,   0x000D, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 1)},  // Voltaje mV (bit 4)
+    // --- Esclavo 5 (DEV_SDM): Analizador de energía monofásico, FC 0x04, 32-bit float ---
+    {DEV_SDM,   0x0000, 2, 0, SENSOR_ID_VOLTAJE},                        // V L1 (bit 1)
+    {DEV_SDM,   0x0006, 2, 0, SENSOR_ID_CORRIENTE},                      // I L1 (bit 2)
+    {DEV_SDM,   0x0048, 2, 0, SENSOR_ID_BATERIA},                        // kWh (bit 0, reusa BATERIA)
+    {DEV_SDM,   0x000C, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 3)},       // W L1 (bit 6)
+    {DEV_SDM,   0x001E, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 4)},       // PF L1 (bit 7)
+    // --- Esclavo 10 (DEV_VCC): Analógicos ---
+    {DEV_VCC,   0x000C, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 0)},       // Presión (bit 3)
+    {DEV_VCC,   0x000D, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 1)},       // Voltaje mV (bit 4)
     // --- Esclavo 1 (DEV_LUX): Luxómetro industrial, 32-bit (2 regs) ---
-    {DEV_LUX,   0x0002, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 2)},  // Iluminación (bit 5)
+    {DEV_LUX,   0x0002, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 2)},       // Iluminación (bit 5)
 };
 
 constexpr size_t kRequestCount = sizeof(kRequests) / sizeof(kRequests[0]);

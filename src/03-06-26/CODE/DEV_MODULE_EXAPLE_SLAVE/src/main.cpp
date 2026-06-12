@@ -26,7 +26,7 @@ const BusConfig kBusCfg = {
 // =================================================================================================
 // Identidad del dispositivo
 // =================================================================================================
-#define SLAVE_ID 1
+#define SLAVE_ID 5
 
 // =================================================================================================
 // Tabla de Registros Modbus
@@ -136,8 +136,8 @@ static uint16_t treatment_pressure_psi(uint16_t adc) {
 // Define aquí: pin ADC, índice del registro Modbus y función de tratamiento.
 // treatment = NULL equivale a treatment_raw (ADC suavizado tal cual).
 AnalogChannel kAnalogChannels[] = {
-    {36, 12, treatment_pressure_psi, {0}, 0},  // GPIO36 → reg 0x0C, presión PSI×100
-    {39, 13, treatment_mv,           {0}, 0},  // GPIO39 → reg 0x0D, voltaje mV
+    {32, 12, treatment_pressure_psi, {0}, 0},  // GPIO32 → reg 0x0C, presión PSI×100
+    {33, 13, treatment_mv,           {0}, 0},  // GPIO33 → reg 0x0D, voltaje mV
 };
 constexpr size_t kAnalogChannelCount = sizeof(kAnalogChannels) / sizeof(kAnalogChannels[0]);
 
