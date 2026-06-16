@@ -199,8 +199,6 @@ void mainPollingTask(void *pvParameters) {
                 // because kRequests[] is already in the desired order)
                 auto& group = groups[req.sensorType];
                 group.insert(group.end(), bytes.begin(), bytes.end());
-                regsPerChannel[req.sensorType] = req.numRegs;
-
                 LOG_D("  -> OK: %u bytes", bytes.size());
             } else {
                 LOG_W("  -> Error %u: Slave=%u, Addr=0x%04X",
@@ -208,6 +206,14 @@ void mainPollingTask(void *pvParameters) {
                       req.slaveID, req.startAddr);
                 failedTypes.insert(req.sensorType);
             }
+        }
+
+        // Pad each group to multiple of 4 bytes (MSB, big-endian) and compute real Len Byte
+        for (auto& kv : groups) {
+            while (kv.second.size() % 4 != 0) {
+                kv.second.insert(kv.second.begin(), 0x00);
+            }
+            regsPerChannel[kv.first] = (uint8_t)(kv.second.size() / 4);
         }
 
         // Assemble payloads and send
