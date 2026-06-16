@@ -205,9 +205,15 @@ void phantomTask(void *pvParameters) {
 
             auto& group = groups[sensor.sensorType];
             group.insert(group.end(), bytes.begin(), bytes.end());
-            regsPerChannel[sensor.sensorType] = sensor.numRegs;
-
             LOG_D("  Sensor %u: %u bytes generados", sensor.sensorType, bytes.size());
+        }
+
+        // Pad each group to multiple of 4 bytes (MSB, big-endian) and compute real Len Byte
+        for (auto& kv : groups) {
+            while (kv.second.size() % 4 != 0) {
+                kv.second.insert(kv.second.begin(), 0x00);
+            }
+            regsPerChannel[kv.first] = (uint8_t)(kv.second.size() / 4);
         }
 
         if (!groups.empty()) {
