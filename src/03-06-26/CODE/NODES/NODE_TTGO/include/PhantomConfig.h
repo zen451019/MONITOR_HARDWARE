@@ -12,7 +12,7 @@
 // =================================================================================================
 
 // ── LoRaWAN identity ────────────────────────────────────────────────────────────────────────────
-#define PHANTOM_DEVADDR 0xC0FFEE01
+#define PHANTOM_DEVADDR 0x260CA18F
 
 // ── Bombardment interval (ms) ───────────────────────────────────────────────────────────────────
 // 0 = as fast as LoRa duty cycle permits (TX_COMPLETE-gated)
