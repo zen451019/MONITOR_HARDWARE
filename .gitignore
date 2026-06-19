@@ -1,0 +1,12 @@
+.*
+!.gitignore
+*/./
+
+**/_pycache_/
+*/.py[cod]
+**/backups/
+**/*-backups/
+**/*-backup.*
+**/backup/
+**_autosave-*
+fp-info-cache
