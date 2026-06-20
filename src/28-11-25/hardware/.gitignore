@@ -1,0 +1,10 @@
+# Archivos temporales de KiCad
+*.kicad_prl
+fp-info-cache
+*backup*
+*.tmp
+*.bak
+
+# Directorios no deseados
+*-backups/
+.autosave/

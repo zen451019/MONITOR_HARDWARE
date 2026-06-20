@@ -18,7 +18,7 @@ const BusConfig kBusCfg = {
     SERIAL_8N1,
     3,   // RX = GPIO3
     1    // TX = GPIO1
-};
+}; 
 
 // R/D del transceptor RS485 se pasa en el constructor de ModbusServerRTU (ver abajo)
 #define DIAG_LED 2  // GPIO2 = LED onboard (parpadea al recibir solicitud Modbus)
