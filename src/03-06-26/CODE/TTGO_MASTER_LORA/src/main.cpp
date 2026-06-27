@@ -195,8 +195,17 @@ void mainPollingTask(void *pvParameters) {
                     }
                 }
 
-                // Append to sensor type group (ordered by channelIndex implicitly
-                // because kRequests[] is already in the desired order)
+                // Pad per-request to 4-byte boundary (each channel = 32-bit block)
+                while (bytes.size() % 4 != 0) {
+                    bytes.insert(bytes.begin(), 0x00);
+                }
+
+                // Word swap for 32-bit values when device sends LOW word first
+                if (req.swapWordOrder) {
+                    uint8_t t0 = bytes[0]; bytes[0] = bytes[2]; bytes[2] = t0;
+                    uint8_t t1 = bytes[1]; bytes[1] = bytes[3]; bytes[3] = t1;
+                }
+
                 auto& group = groups[req.sensorType];
                 group.insert(group.end(), bytes.begin(), bytes.end());
                 LOG_D("  -> OK: %u bytes", bytes.size());
@@ -208,7 +217,7 @@ void mainPollingTask(void *pvParameters) {
             }
         }
 
-        // Pad each group to multiple of 4 bytes (MSB, big-endian) and compute real Len Byte
+        // Safety: pad each group to multiple of 4 bytes (should already be aligned)
         for (auto& kv : groups) {
             while (kv.second.size() % 4 != 0) {
                 kv.second.insert(kv.second.begin(), 0x00);

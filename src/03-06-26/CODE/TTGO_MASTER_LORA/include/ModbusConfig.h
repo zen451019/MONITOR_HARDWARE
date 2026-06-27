@@ -38,12 +38,13 @@ struct ModbusDeviceCfg {
     uint32_t timeoutMs;       // per-device timeout override
 };
 
-#define DEV_VCC   5
-#define DEV_SDM   10
-#define DEV_LUX   1
+// #define DEV_VCC   5       // Comentado: prueba con nuevo dispositivo
+// #define DEV_SDM   10      // Comentado: prueba con nuevo dispositivo
+// #define DEV_LUX   1       // Comentado: prueba con nuevo dispositivo
+#define DEV_TRIFASICO   2     // Nuevo Medidor de Energía Trifásico
 
 const ModbusDeviceCfg kDeviceCfg[] = {
-    {DEV_SDM, 0x04, false, 2000},  // SDM630MCT: input registers, big-endian float
+    {DEV_TRIFASICO, 0x04, true, 2000},  // Trifásico: input regs, low byte first → swapWords
 };
 
 constexpr size_t kDeviceCfgCount = sizeof(kDeviceCfg) / sizeof(kDeviceCfg[0]);
@@ -59,22 +60,18 @@ struct ModbusRequest {
     uint8_t  slaveID;
     uint16_t startAddr;
     uint16_t numRegs;
-    uint8_t  channelIndex;   // sub-índice dentro del tipo de sensor
-    uint8_t  sensorType;     // SENSOR_ID_VOLTAJE, SENSOR_ID_CORRIENTE, etc.
+    uint8_t  channelIndex;     // sub-índice dentro del tipo de sensor
+    uint8_t  sensorType;       // SENSOR_ID_VOLTAJE, SENSOR_ID_CORRIENTE, etc.
+    bool     swapWordOrder;    // intercambia palabra ALTA/BAJA (para 32-bit con LOW word primero)
 };
 
 const ModbusRequest kRequests[] = {
-    // --- Esclavo 5 (DEV_SDM): Analizador de energía monofásico, FC 0x04, 32-bit float ---
-    {DEV_SDM,   0x0000, 2, 0, SENSOR_ID_VOLTAJE},                        // V L1 (bit 1)
-    {DEV_SDM,   0x0006, 2, 0, SENSOR_ID_CORRIENTE},                      // I L1 (bit 2)
-    {DEV_SDM,   0x0048, 2, 0, SENSOR_ID_BATERIA},                        // kWh (bit 0, reusa BATERIA)
-    {DEV_SDM,   0x000C, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 3)},       // W L1 (bit 6)
-    {DEV_SDM,   0x001E, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 4)},       // PF L1 (bit 7)
-    // --- Esclavo 10 (DEV_VCC): Analógicos ---
-    {DEV_VCC,   0x000C, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 0)},       // Presión (bit 3)
-    {DEV_VCC,   0x000D, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 1)},       // Voltaje mV (bit 4)
-    // --- Esclavo 1 (DEV_LUX): Luxómetro industrial, 32-bit (2 regs) ---
-    {DEV_LUX,   0x0002, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 2)},       // Iluminación (bit 5)
+    // --- Esclavo 2 (DEV_TRIFASICO): Medidor de Energía Trifásico, FC 0x04, uint16/int32, low byte first ---
+    {DEV_TRIFASICO, 0x0000, 1, 0, SENSOR_ID_VOLTAJE,                    false},  // V Fase A, uint16 (0.1V)   → bit 1
+    {DEV_TRIFASICO, 0x0003, 1, 0, SENSOR_ID_CORRIENTE,                  false},  // I Fase A, uint16 (0.01A)  → bit 2
+    {DEV_TRIFASICO, 0x000E, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 3),   true},   // P Activa A, int32 (0.1W)  → bit 6, LOW word first
+    {DEV_TRIFASICO, 0x003A, 2, 0, SENSOR_ID_BATERIA,                    true},   // Energía Total, uint32 (0.1kWh) → bit 0, LOW word first
+    {DEV_TRIFASICO, 0x0026, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 4),   false},  // PF A,B,C,Total (packed uint8×4, ×0.01) → bit 7
 };
 
 constexpr size_t kRequestCount = sizeof(kRequests) / sizeof(kRequests[0]);
