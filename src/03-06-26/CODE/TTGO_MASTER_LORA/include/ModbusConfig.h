@@ -39,12 +39,12 @@ struct ModbusDeviceCfg {
 };
 
 // #define DEV_VCC   5       // Comentado: prueba con nuevo dispositivo
-// #define DEV_SDM   10      // Comentado: prueba con nuevo dispositivo
+#define DEV_SDM   10         // Eastron SDM630MCT Smart Meter
 // #define DEV_LUX   1       // Comentado: prueba con nuevo dispositivo
-#define DEV_TRIFASICO   2     // Nuevo Medidor de Energía Trifásico
+// #define DEV_TRIFASICO   2   // Reemplazado por SDM630
 
 const ModbusDeviceCfg kDeviceCfg[] = {
-    {DEV_TRIFASICO, 0x04, true, 2000},  // Trifásico: input regs, low byte first → swapWords
+    {DEV_SDM, 0x04, false, 2000},       // SDM630MCT: input regs, MSB register first, hi-byte first
 };
 
 constexpr size_t kDeviceCfgCount = sizeof(kDeviceCfg) / sizeof(kDeviceCfg[0]);
@@ -66,12 +66,27 @@ struct ModbusRequest {
 };
 
 const ModbusRequest kRequests[] = {
-    // --- Esclavo 2 (DEV_TRIFASICO): Medidor de Energía Trifásico, FC 0x04, uint16/int32, low byte first ---
-    {DEV_TRIFASICO, 0x0000, 1, 0, SENSOR_ID_VOLTAJE,                    false},  // V Fase A, uint16 (0.1V)   → bit 1
-    {DEV_TRIFASICO, 0x0003, 1, 0, SENSOR_ID_CORRIENTE,                  false},  // I Fase A, uint16 (0.01A)  → bit 2
-    {DEV_TRIFASICO, 0x000E, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 3),   true},   // P Activa A, int32 (0.1W)  → bit 6, LOW word first
-    {DEV_TRIFASICO, 0x003A, 2, 0, SENSOR_ID_BATERIA,                    true},   // Energía Total, uint32 (0.1kWh) → bit 0, LOW word first
-    {DEV_TRIFASICO, 0x0026, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 4),   false},  // PF A,B,C,Total (packed uint8×4, ×0.01) → bit 7
+    // --- Esclavo 10 (DEV_SDM): Eastron SDM630MCT, FC 0x04, 32-bit IEEE 754 float (MSB register first) ---
+    // BATERIA (bit 0): Total kWh                          → 1 canal
+    {DEV_SDM, 0x0156, 2, 0, SENSOR_ID_BATERIA,                    false},  // 30343: Total kWh (float)
+    // VOLTAJE (bit 1): V L1-L2, V L2-L3, V L3-L1           → 3 canales
+    {DEV_SDM, 0x00C8, 2, 0, SENSOR_ID_VOLTAJE,                   false},  // 30201: V L1-L2 (float)
+    {DEV_SDM, 0x00CA, 2, 1, SENSOR_ID_VOLTAJE,                   false},  // 30203: V L2-L3 (float)
+    {DEV_SDM, 0x00CC, 2, 2, SENSOR_ID_VOLTAJE,                   false},  // 30205: V L3-L1 (float)
+    // CORRIENTE (bit 2): I L1, I L2, I L3                   → 3 canales
+    {DEV_SDM, 0x0006, 2, 0, SENSOR_ID_CORRIENTE,                 false},  // 30007: I L1 (float)
+    {DEV_SDM, 0x0008, 2, 1, SENSOR_ID_CORRIENTE,                 false},  // 30009: I L2 (float)
+    {DEV_SDM, 0x000A, 2, 2, SENSOR_ID_CORRIENTE,                 false},  // 30011: I L3 (float)
+    // EXT+0 (bit 3): Potencia activa total                  → 1 canal
+    {DEV_SDM, 0x0034, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 0),  false},  // 30053: P activa total (float)
+    // EXT+1 (bit 4): Potencia aparente total                → 1 canal
+    {DEV_SDM, 0x0038, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 1),  false},  // 30057: S aparente total (float)
+    // EXT+2 (bit 5): Potencia reactiva total                → 1 canal
+    {DEV_SDM, 0x003C, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 2),  false},  // 30061: Q reactiva total (float)
+    // EXT+3 (bit 6): Factor de potencia total               → 1 canal
+    {DEV_SDM, 0x003E, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 3),  false},  // 30063: PF total (float)
+    // EXT+4 (bit 7): Frecuencia                             → 1 canal
+    {DEV_SDM, 0x0046, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 4),  false},  // 30071: Frecuencia (float)
 };
 
 constexpr size_t kRequestCount = sizeof(kRequests) / sizeof(kRequests[0]);
