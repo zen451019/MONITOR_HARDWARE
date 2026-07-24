@@ -38,13 +38,10 @@ struct ModbusDeviceCfg {
     uint32_t timeoutMs;       // per-device timeout override
 };
 
-// #define DEV_VCC   5       // Comentado: prueba con nuevo dispositivo
-#define DEV_SDM   10         // Eastron SDM630MCT Smart Meter
-// #define DEV_LUX   1       // Comentado: prueba con nuevo dispositivo
-// #define DEV_TRIFASICO   2   // Reemplazado por SDM630
+#define DEV_TRIFASICO_NUEVO 1   // Medidor Trifásico (manual_modbus_rtu_clean): low-byte-first
 
 const ModbusDeviceCfg kDeviceCfg[] = {
-    {DEV_SDM, 0x04, false, 2000},       // SDM630MCT: input regs, MSB register first, hi-byte first
+    {DEV_TRIFASICO_NUEVO, 0x04, true, 2000},   // input regs, low-byte-first (little-endian per register)
 };
 
 constexpr size_t kDeviceCfgCount = sizeof(kDeviceCfg) / sizeof(kDeviceCfg[0]);
@@ -66,27 +63,37 @@ struct ModbusRequest {
 };
 
 const ModbusRequest kRequests[] = {
-    // --- Esclavo 10 (DEV_SDM): Eastron SDM630MCT, FC 0x04, 32-bit IEEE 754 float (MSB register first) ---
-    // BATERIA (bit 0): Total kWh                          → 1 canal
-    {DEV_SDM, 0x0156, 2, 0, SENSOR_ID_BATERIA,                    false},  // 30343: Total kWh (float)
-    // VOLTAJE (bit 1): V L1-L2, V L2-L3, V L3-L1           → 3 canales
-    {DEV_SDM, 0x00C8, 2, 0, SENSOR_ID_VOLTAJE,                   false},  // 30201: V L1-L2 (float)
-    {DEV_SDM, 0x00CA, 2, 1, SENSOR_ID_VOLTAJE,                   false},  // 30203: V L2-L3 (float)
-    {DEV_SDM, 0x00CC, 2, 2, SENSOR_ID_VOLTAJE,                   false},  // 30205: V L3-L1 (float)
-    // CORRIENTE (bit 2): I L1, I L2, I L3                   → 3 canales
-    {DEV_SDM, 0x0006, 2, 0, SENSOR_ID_CORRIENTE,                 false},  // 30007: I L1 (float)
-    {DEV_SDM, 0x0008, 2, 1, SENSOR_ID_CORRIENTE,                 false},  // 30009: I L2 (float)
-    {DEV_SDM, 0x000A, 2, 2, SENSOR_ID_CORRIENTE,                 false},  // 30011: I L3 (float)
-    // EXT+0 (bit 3): Potencia activa total                  → 1 canal
-    {DEV_SDM, 0x0034, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 0),  false},  // 30053: P activa total (float)
-    // EXT+1 (bit 4): Potencia aparente total                → 1 canal
-    {DEV_SDM, 0x0038, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 1),  false},  // 30057: S aparente total (float)
-    // EXT+2 (bit 5): Potencia reactiva total                → 1 canal
-    {DEV_SDM, 0x003C, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 2),  false},  // 30061: Q reactiva total (float)
-    // EXT+3 (bit 6): Factor de potencia total               → 1 canal
-    {DEV_SDM, 0x003E, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 3),  false},  // 30063: PF total (float)
-    // EXT+4 (bit 7): Frecuencia                             → 1 canal
-    {DEV_SDM, 0x0046, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 4),  false},  // 30071: Frecuencia (float)
+    // --- Esclavo 1 (DEV_TRIFASICO_NUEVO): FC 0x04, low-byte-first per register ---
+    // swapWordOrder=true  → valores 32-bit donde el dispositivo manda LOW word primero
+    // swapWordOrder=false → valores 16-bit (1 solo registro, no hay segundo word que intercambiar)
+
+    // BATERIA (bit 0): Energía Activa Total → 32-bit, LOW word first
+    {DEV_TRIFASICO_NUEVO, 0x003A, 2, 0, SENSOR_ID_BATERIA,              true},
+
+    // VOLTAJE (bit 1): V Fase A, B, C → 16-bit c/u (LSB = 0.1 V)
+    {DEV_TRIFASICO_NUEVO, 0x0000, 1, 0, SENSOR_ID_VOLTAJE,             false},
+    {DEV_TRIFASICO_NUEVO, 0x0001, 1, 1, SENSOR_ID_VOLTAJE,             false},
+    {DEV_TRIFASICO_NUEVO, 0x0002, 1, 2, SENSOR_ID_VOLTAJE,             false},
+
+    // CORRIENTE (bit 2): I Fase A, B, C → 16-bit c/u (LSB = 0.01 A)
+    {DEV_TRIFASICO_NUEVO, 0x0003, 1, 0, SENSOR_ID_CORRIENTE,           false},
+    {DEV_TRIFASICO_NUEVO, 0x0004, 1, 1, SENSOR_ID_CORRIENTE,           false},
+    {DEV_TRIFASICO_NUEVO, 0x0005, 1, 2, SENSOR_ID_CORRIENTE,           false},
+
+    // EXT+0 (bit 3): Potencia Activa Total → 32-bit signed, LOW word first
+    {DEV_TRIFASICO_NUEVO, 0x0020, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 0),  true},
+
+    // EXT+1 (bit 4): Potencia Aparente Total → 32-bit signed, LOW word first
+    {DEV_TRIFASICO_NUEVO, 0x0024, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 1),  true},
+
+    // EXT+2 (bit 5): Potencia Reactiva Total → 32-bit signed, LOW word first
+    {DEV_TRIFASICO_NUEVO, 0x0022, 2, 0, (uint8_t)(SENSOR_ID_EXT_START + 2),  true},
+
+    // EXT+3 (bit 6): Factor de Potencia Combinado → 1 reg, backend extrae byte bajo
+    {DEV_TRIFASICO_NUEVO, 0x0027, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 3), false},
+
+    // EXT+4 (bit 7): Frecuencia Fase A → 16-bit (LSB = 0.01 Hz)
+    {DEV_TRIFASICO_NUEVO, 0x0006, 1, 0, (uint8_t)(SENSOR_ID_EXT_START + 4), false},
 };
 
 constexpr size_t kRequestCount = sizeof(kRequests) / sizeof(kRequests[0]);

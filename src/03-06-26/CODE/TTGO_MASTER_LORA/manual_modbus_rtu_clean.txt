@@ -1,0 +1,146 @@
+# Manual Técnico de Especificación del Protocolo - Medidor de Energía Trifásico (Modbus-RTU)
+
+## 1. Capa Física (Physical Layer)
+* **Interfaz de comunicación:** UART / RS485.
+* **Configuración de parámetros serie:**
+  * Velocidad de transmisión (Baud rate): Configurable.
+  * Bits de datos: 8 bits.
+  * Bits de parada (Stop bits): 1 bit.
+  * Paridad: Ninguna (No parity).
+
+---
+
+## 2. Capa de Aplicación (Modbus-RTU)
+* **Rol del dispositivo:** Esclavo (Slave).
+
+### Códigos de Función Soportados
+
+| Código (Hex) | Operación Estándar Modbus | Descripción y Aplicación |
+| :--- | :--- | :--- |
+| `0x03` | Read Holding Registers | Lectura de parámetros de configuración y control del esclavo. |
+| `0x04` | Read Input Registers | Lectura de los resultados de las mediciones eléctricas en tiempo real. |
+| `0x10` | Write Multiple Registers | Escritura de múltiples registros para modificación de parámetros. |
+| `0x41` | Calibration (Propietario) | Función de uso exclusivo para calibración de fábrica (requiere contraseña). |
+| `0x42` | Reset Energy (Propietario) | Comando dedicado para reinicio y puesta a cero de los contadores de energía. |
+
+> **Nota sobre el Código de Función 0x41 (Calibración):**  
+> Reservado exclusivamente para mantenimiento y calibración en fábrica. Solo se puede direccionar usando la dirección de esclavo general `0xF8`. Requiere obligatoriamente una contraseña de 16 bits cuyo valor por defecto es `0x3721`.
+
+### Direccionamiento de Nodos (Slave Addressing)
+* **Direcciones válidas de esclavos:** `0x01` a `0xF7` (1 a 247 en decimal).
+* **Dirección Broadcast (`0x00`):** Difusión general desde el Maestro. Los esclavos ejecutan la acción pero no responden para evitar colisiones en el bus.
+* **Dirección General/Unitaria (`0xF8`):** Reservada para entornos de un único esclavo (Single-slave environment). Utilizada principalmente para calibración y ajustes.
+
+---
+
+## 3. Lectura de Resultados de Medición (Función 0x04)
+
+### Estructura de la Trama de Petición (Maestro)
+`[Dirección Esclavo] + [0x04] + [Reg. Alto] + [Reg. Bajo] + [Cant. Reg. Alto] + [Cant. Reg. Bajo] + [CRC Alto] + [CRC Bajo]`  
+*(Tamaño total: 8 bytes)*
+
+### Respuestas del Esclavo
+1. **Respuesta Correcta:**  
+   `[Dirección Esclavo] + [0x04] + [Número de Bytes] + [Reg 1 Data Bajo] + [Reg 1 Data Alto] + ... + [CRC Alto] + [CRC Bajo]`  
+   * **IMPORTANTE (Endianness / Distribución de Bytes):** A diferencia del estándar Modbus convencional, los datos de los registros de medición se transmiten con el **byte bajo primero (Low Byte First / Little Endian a nivel de registro)**, seguido por el byte alto.
+
+2. **Respuesta de Error (Excepción Modbus):**  
+   `[Dirección Esclavo] + [0x84] + [Código de Excepción] + [CRC Alto] + [CRC Bajo]`
+
+### Códigos de Excepción / Anomalía
+* `0x01` (**Illegal Function**): Código de función no soportado.
+* `0x02` (**Illegal Address**): Dirección de registro fuera de rango o inválida.
+* `0x03` (**Illegal Data**): Valor de datos no permitido o cantidad de registros incorrecta.
+* `0x04` (**Slave Error**): Error interno en el dispositivo esclavo.
+
+---
+
+## 4. Mapa de Registros de Medición (Función 0x04 - Read Input Registers)
+
+*Nota: Todos los registros son enteros sin signo (unsigned) a menos que se indique "Signed".*
+
+| Dirección (Hex) | Descripción de la Variable | Resolución y Tipo de Dato |
+| :--- | :--- | :--- |
+| `0x0000` | Voltaje Fase A | LSB = 0.1 V (Unsigned, Low Byte First) |
+| `0x0001` | Voltaje Fase B | LSB = 0.1 V (Unsigned) |
+| `0x0002` | Voltaje Fase C | LSB = 0.1 V (Unsigned) |
+| `0x0003` | Corriente Fase A | LSB = 0.01 A (Unsigned) |
+| `0x0004` | Corriente Fase B | LSB = 0.01 A (Unsigned) |
+| `0x0005` | Corriente Fase C | LSB = 0.01 A (Unsigned) |
+| `0x0006` | Frecuencia Voltaje Fase A | LSB = 0.01 Hz |
+| `0x0007` | Frecuencia Voltaje Fase B | LSB = 0.01 Hz |
+| `0x0008` | Frecuencia Voltaje Fase C | LSB = 0.01 Hz |
+| `0x0009` | Ángulo de Fase Voltaje B | LSB = 0.01° (Relativo a Fase A de Voltaje) |
+| `0x000A` | Ángulo de Fase Voltaje C | LSB = 0.01° (Relativo a Fase A de Voltaje) |
+| `0x000B` | Ángulo de Fase Corriente A | LSB = 0.01° (Relativo a Fase A de Voltaje) |
+| `0x000C` | Ángulo de Fase Corriente B | LSB = 0.01° (Relativo a Fase A de Voltaje) |
+| `0x000D` | Ángulo de Fase Corriente C | LSB = 0.01° (Relativo a Fase A de Voltaje) |
+| `0x000E` - `0x000F` | Potencia Activa Fase A (32-bit: Low 16 / High 16) | LSB = 0.1 W (Signed) |
+| `0x0010` - `0x0011` | Potencia Activa Fase B (32-bit: Low 16 / High 16) | LSB = 0.1 W (Signed) |
+| `0x0012` - `0x0013` | Potencia Activa Fase C (32-bit: Low 16 / High 16) | LSB = 0.1 W (Signed) |
+| `0x0014` - `0x0015` | Potencia Reactiva Fase A (32-bit: Low 16 / High 16) | LSB = 0.1 Var (Signed) |
+| `0x0016` - `0x0017` | Potencia Reactiva Fase B (32-bit: Low 16 / High 16) | LSB = 0.1 Var (Signed) |
+| `0x0018` - `0x0019` | Potencia Reactiva Fase C (32-bit: Low 16 / High 16) | LSB = 0.1 Var (Signed) |
+| `0x001A` - `0x001B` | Potencia Aparente Fase A (32-bit: Low 16 / High 16) | LSB = 0.1 VA (Signed) |
+| `0x001C` - `0x001D` | Potencia Aparente Fase B (32-bit: Low 16 / High 16) | LSB = 0.1 VA (Signed) |
+| `0x001E` - `0x001F` | Potencia Aparente Fase C (32-bit: Low 16 / High 16) | LSB = 0.1 VA (Signed) |
+| `0x0020` - `0x0021` | Potencia Activa Total / Combinada (32-bit: Low 16 / High 16) | LSB = 0.1 W (Signed) |
+| `0x0022` - `0x0023` | Potencia Reactiva Total / Combinada (32-bit: Low 16 / High 16) | LSB = 0.1 Var (Signed) |
+| `0x0024` - `0x0025` | Potencia Aparente Total / Combinada (32-bit: Low 16 / High 16) | LSB = 0.1 VA (Signed) |
+| `0x0026` | Factor de Potencia Fase A y Fase B | LSB = 0.01 (High Byte = Fase A, Low Byte = Fase B) |
+| `0x0027` | Factor de Potencia Fase C y Combinado | LSB = 0.01 (High Byte = Fase C, Low Byte = Combinado) |
+| `0x0028` - `0x0029` | Energía Activa Fase A (32-bit) | LSB = 0.1 kWh |
+| `0x002A` - `0x002B` | Energía Activa Fase B (32-bit) | LSB = 0.1 kWh |
+| `0x002C` - `0x002D` | Energía Activa Fase C (32-bit) | LSB = 0.1 kWh |
+| `0x002E` - `0x002F` | Energía Reactiva Fase A (32-bit) | LSB = 0.1 kVar |
+| `0x0030` - `0x0031` | Energía Reactiva Fase B (32-bit) | LSB = 0.1 kVar |
+| `0x0032` - `0x0033` | Energía Reactiva Fase C (32-bit) | LSB = 0.1 kVar |
+| `0x0034` - `0x0035` | Energía Aparente Fase A (32-bit) | LSB = 0.1 kVA |
+| `0x0036` - `0x0037` | Energía Aparente Fase B (32-bit) | LSB = 0.1 kVA |
+| `0x0038` - `0x0039` | Energía Aparente Fase C (32-bit) | LSB = 0.1 kVA |
+| `0x003A` - `0x003B` | Energía Activa Total / Combinada (32-bit) | LSB = 0.1 kWh |
+| `0x003C` - `0x003D` | Energía Reactiva Total / Combinada (32-bit) | LSB = 0.1 kVar |
+| `0x003E` - `0x003F` | Energía Aparente Total / Combinada (32-bit) | LSB = 0.1 kVA |
+
+---
+
+## 5. Modificación de Parámetros del Esclavo (Función 0x10)
+
+* Lectura de parámetros de configuración: Código `0x03` (Read Holding Registers).
+* Modificación de parámetros de configuración: Código `0x10` (Write Multiple Registers).
+
+### Estructura de la Trama de Escritura (Maestro)
+`[Dirección Esclavo] + [0x10] + [Reg. Alto] + [Reg. Bajo] + [Cant. Reg. Alto] + [Cant. Reg. Bajo] + [N Bytes] + [Datos N Bytes...] + [CRC Alto] + [CRC Bajo]`
+
+### Respuestas del Esclavo
+* **Respuesta Correcta:**  
+  `[Dirección Esclavo] + [0x10] + [Reg. Alto] + [Reg. Bajo] + [Cant. Reg. Alto] + [Cant. Reg. Bajo] + [CRC Alto] + [CRC Bajo]`
+* **Respuesta de Error:**  
+  `[Dirección Esclavo] + [0x90] + [Código de Excepción] + [CRC Alto] + [CRC Bajo]`
+
+### Ejemplo Práctico
+Para escribir 3 registros comenzando en `0x0000`:
+* **Comando Maestro:** `[0x01] [0x10] [0x00] [0x00] [0x00] [0x03] [0x06] [Data 6 Bytes...] [CRC High] [CRC Low]`
+* **Respuesta Esclavo:** `[0x01] [0x10] [0x00] [0x00] [0x00] [0x03] [CRC High] [CRC Low]`
+
+---
+
+## 6. Comando de Reinicio de Energía / Reset Energy (Función 0x42)
+
+Comando propietario para poner a cero los contadores de consumo acumulados. Trama de longitud fija de 6 bytes.
+
+### Estructura de la Trama de Reinicio (Maestro)
+`[Dirección Esclavo] + [0x42] + [0x00] + [Secuencia de Fase] + [CRC Alto] + [CRC Bajo]`
+
+### Codificación del Campo "Secuencia de Fase"
+* `0x00`: Reiniciar Energía de Fase A.
+* `0x01`: Reiniciar Energía de Fase B.
+* `0x02`: Reiniciar Energía de Fase C.
+* `0x03`: Reiniciar Energía de Fase Combinada / Total.
+* `0x0F`: Reiniciar Toda la Energía (Reset total de todos los contadores).
+
+### Respuestas del Esclavo
+* **Respuesta Correcta (Echo/Acuse de recibo):** Réplica exacta de la trama recibida.  
+  `[Dirección Esclavo] + [0x42] + [0x00] + [Secuencia de Fase] + [CRC Alto] + [CRC Bajo]`
+* **Respuesta de Error:**  
+  `[Dirección Esclavo] + [0xC2] + [Código de Excepción] + [CRC Alto] + [CRC Bajo]`
