@@ -215,6 +215,8 @@ void mainPollingTask(void *pvParameters) {
                       req.slaveID, req.startAddr);
                 failedTypes.insert(req.sensorType);
             }
+
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
 
         // Safety: pad each group to multiple of 4 bytes (should already be aligned)
