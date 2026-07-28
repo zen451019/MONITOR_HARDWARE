@@ -291,7 +291,15 @@ void initLoRa() {
     LMIC_reset();
     LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
     LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
+#ifdef SINGLE_CHANNEL_MODE
+    LMIC_selectSubBand(0);
+    for (int i = 1; i <= 7; i++) {
+        LMIC_disableChannel(i);
+    }
+    LMIC_disableChannel(64);
+#else
     LMIC_selectSubBand(7);
+#endif
     LMIC_setDrTxpow(US915_DR_SF7, 20);
     LMIC_setAdrMode(0);
     LMIC_setLinkCheckMode(0);
