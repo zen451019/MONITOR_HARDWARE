@@ -6,7 +6,7 @@ Arquitectura **table-driven**: una tabla estática de lecturas y una sola tarea 
 - **Dispositivo**: medidor trifásico **`DEV_TRIFASICO_NUEVO`** (slave **1**, `u16`/`int32` little-endian por registro, ver `manual_modbus_rtu_clean.txt`).
 - Reprogramable tal cual: es un proyecto PlatformIO completo e independiente.
 - **Stack LoRaWAN**: **RadioLib** (migrado desde MCCI LMIC). Activación **OTAA**, **Class A**.
-  Sesión y nonces persistidos en NVS (`Preferences`).
+  Rejoin en cada arranque; solo se persisten los **nonces** en NVS (`Preferences`).
 
 ---
 
@@ -163,11 +163,26 @@ entrega en `sendReceive()` y `handleDownlink()` lo procesa:
 | `0x03` SET_TX_POWER | `[1]` int8 (dBm) | `node.setTxPower()` |
 | `0x04` SET_DATARATE | `[1]` uint8 DR | `node.setDatarate()` (ADR debe estar off) |
 | `0x05` REBOOT | — | `ESP.restart()` |
+| `0x06` REJOIN | — | `node.clearSession()` + join |
 | `0x07` SET_ADR | `[1]` 0/1 | `node.setADR()` |
 
-Uplinks en `FPORT_DATA` = 1. La sesión y los nonces se guardan en NVS con
-`saveSession()` tras cada `sendReceive` (y se restauran con `loadSession()` al arrancar)
-para evitar desajustes de contador de frames entre reinicios.
+Uplinks en `FPORT_DATA` = 1.
+
+### Persistencia y rejoin (estrategia)
+
+- **Se re-une en cada arranque** (OTAA). No se persiste la sesión: así el `FCnt` arranca en 0
+  y el servidor acepta la sesión nueva, sin huecos de contador ni desgaste de NVS.
+- Solo se persiste el **DevNonce/JoinNonce** (`saveNonces()` / `loadNonces()`), para que el
+  Join Server no rechace el join por `reuse_dev_nonce`. `loadNonces()` se llama **después** de
+  `beginOTAA()` (que limpia el buffer y fija el checksum).
+- **Auto-rejoin**: si fallan `REJOIN_FAIL_THRESHOLD` (3) uplinks seguidos con error de radio,
+  se hace `clearSession()` + join. También de forma manual con el comando `0x06`.
+- **Reintentos de join en el arranque**: `joinNetwork()` intenta hasta `JOIN_MAX_ATTEMPTS`
+  (5) con `JOIN_RETRY_DELAY_MS` (5 s). Si el DevNonce guardado va por detrás de la marca del
+  servidor (`reuse_dev_nonce`), cada intento lo incrementa y se autocorrige en segundos.
+  Loguea el **DevNonce** restaurado y el de cada intento (`readDevNonce()`).
+- `joinNetwork()` aplica `setADR(false)`/`setDatarate(3)`/`setTxPower(20)` **después** de
+  activar (durante el join, `selectChannels()` deja el DR en 0 y provocaría `PACKET_TOO_LONG`).
 
 > En Class A el downlink solo puede llegar tras un uplink. Para control en cualquier
 > momento habría que pasar a Class C (`node.setClass(RADIOLIB_LORAWAN_CLASS_C)` +

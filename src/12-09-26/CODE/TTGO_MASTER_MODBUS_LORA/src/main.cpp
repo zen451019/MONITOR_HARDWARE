@@ -51,6 +51,14 @@ static const uint8_t LORAWAN_SUB_BAND = 2;
 static const uint8_t FPORT_DATA = 1;   // uplink: sensor payload
 static const uint8_t FPORT_CMD  = 2;   // downlink: control commands
 
+// Auto-rejoin: number of consecutive uplink errors before clearing the session and rejoining.
+static const uint8_t REJOIN_FAIL_THRESHOLD = 3;
+
+// Join retries at boot: if the stored DevNonce is behind the server's high-water mark,
+// each attempt advances it, so a few retries self-heal without waiting for the auto-rejoin.
+static const uint8_t  JOIN_MAX_ATTEMPTS   = 5;
+static const uint32_t JOIN_RETRY_DELAY_MS = 5000;
+
 // TTGO LoRa32 v2.1 pinout: NSS=18, DIO0=26, RST=23, DIO1=33.
 static SX1276 radio = new Module(18, 26, 23, 33);
 static LoRaWANNode node(&radio, &US915, LORAWAN_SUB_BAND);
@@ -69,8 +77,10 @@ static TaskHandle_t g_pollTaskHandle = NULL;
 std::vector<uint8_t> construirPayloadUnificado(uint8_t id_mensaje,
     const std::vector<SensorDataPayload>& collectedPayloads);
 static void flushUartRx(HardwareSerial& s);
-static void saveSession();
-static void loadSession();
+static void saveNonces();
+static void loadNonces();
+static bool joinNetwork();
+static void forceRejoin();
 static void handleDownlink(const uint8_t* data, size_t len, const LoRaWANEvent_t& ev);
 
 // =================================================================================================
@@ -297,39 +307,87 @@ void mainPollingTask(void *pvParameters) {
 }
 
 // =================================================================================================
-// LoRaWAN (RadioLib) — session persistence
+// LoRaWAN (RadioLib) — nonces persistence + join helpers
 // =================================================================================================
-
-static void saveSession() {
-    prefs.begin("lorawan", false);
-    prefs.putBytes("session", node.getBufferSession(), RADIOLIB_LORAWAN_SESSION_BUF_SIZE);
-    prefs.putBytes("nonces",  node.getBufferNonces(),  RADIOLIB_LORAWAN_NONCES_BUF_SIZE);
-    prefs.end();
-}
+// Strategy: rejoin on every boot. We do NOT persist the session (that avoids frame-counter
+// gaps after a reboot and avoids NVS wear); we only persist the DevNonce/JoinNonce so the
+// network server does not reject a repeated DevNonce ("reuse_dev_nonce").
 
 // Persist only the nonces buffer (DevNonce/JoinNonce). Must be called after every join
-// attempt, even a failed one, so the DevNonce keeps advancing across reboots and the
-// network server does not reject it as "reuse_dev_nonce".
+// attempt, even a failed one, so the DevNonce keeps advancing across reboots.
 static void saveNonces() {
     prefs.begin("lorawan", false);
     prefs.putBytes("nonces", node.getBufferNonces(), RADIOLIB_LORAWAN_NONCES_BUF_SIZE);
     prefs.end();
 }
 
-static void loadSession() {
+// Read the current DevNonce from the (public) nonces buffer (stored little-endian).
+static uint16_t readDevNonce() {
+    const uint8_t* b = node.getBufferNonces() + RADIOLIB_LORAWAN_NONCES_DEV_NONCE;
+    return (uint16_t)b[0] | ((uint16_t)b[1] << 8);
+}
+
+// Restore the nonces buffer. MUST be called AFTER beginOTAA(), which clears the buffer
+// and sets the key/mode/plan checksum that setBufferNonces() validates against.
+static void loadNonces() {
     prefs.begin("lorawan", true);
-    uint8_t sessionBuf[RADIOLIB_LORAWAN_SESSION_BUF_SIZE];
-    if (prefs.getBytesLength("session") == RADIOLIB_LORAWAN_SESSION_BUF_SIZE &&
-        prefs.getBytes("session", sessionBuf, RADIOLIB_LORAWAN_SESSION_BUF_SIZE) == RADIOLIB_LORAWAN_SESSION_BUF_SIZE) {
-        node.setBufferSession(sessionBuf);
-        LOG_I("LoRaWAN: sesión restaurada desde NVS.");
-    }
     uint8_t noncesBuf[RADIOLIB_LORAWAN_NONCES_BUF_SIZE];
-    if (prefs.getBytesLength("nonces") == RADIOLIB_LORAWAN_NONCES_BUF_SIZE &&
+    if (prefs.isKey("nonces") &&
+        prefs.getBytesLength("nonces") == RADIOLIB_LORAWAN_NONCES_BUF_SIZE &&
         prefs.getBytes("nonces", noncesBuf, RADIOLIB_LORAWAN_NONCES_BUF_SIZE) == RADIOLIB_LORAWAN_NONCES_BUF_SIZE) {
-        node.setBufferNonces(noncesBuf);
+        int16_t st = node.setBufferNonces(noncesBuf);
+        if (st == RADIOLIB_ERR_NONE) {
+            LOG_I("LoRaWAN: nonces restaurados desde NVS (DevNonce=%u).", readDevNonce());
+        } else {
+            LOG_W("LoRaWAN: setBufferNonces() = %d (se usará un DevNonce nuevo).", st);
+        }
+    } else {
+        LOG_W("LoRaWAN: no hay nonces en NVS (primer arranque).");
     }
     prefs.end();
+}
+
+// Join (or rejoin) the network and apply the uplink settings.
+// Retries a few times: if the stored DevNonce is behind the server's high-water mark, each
+// attempt advances it, so it self-heals quickly instead of waiting for the auto-rejoin.
+static bool joinNetwork() {
+    for (uint8_t attempt = 1; attempt <= JOIN_MAX_ATTEMPTS; ++attempt) {
+        LOG_I("LoRaWAN: intento de join %u/%u (DevNonce=%u).",
+              attempt, JOIN_MAX_ATTEMPTS, readDevNonce());
+
+        int16_t state = node.activateOTAA();
+
+        // Persist the advanced DevNonce even if the join failed.
+        saveNonces();
+
+        if (state == RADIOLIB_LORAWAN_NEW_SESSION ||
+            state == RADIOLIB_LORAWAN_SESSION_RESTORED ||
+            state == RADIOLIB_ERR_NONE) {
+            // Apply the datarate AFTER activation: during the join, RadioLib's selectChannels()
+            // forces the join DR (DR0 on US915) and does not restore it, which would make the
+            // first uplink exceed the payload limit (RADIOLIB_ERR_PACKET_TOO_LONG, -4).
+            node.setADR(false);
+            node.setDatarate(3);       // US915 DR3 = SF7/125 kHz
+            node.setTxPower(20);
+            LOG_I("LoRaWAN: join OK (max payload %u B, DevNonce=%u).",
+                  (unsigned)node.getMaxPayloadLen(), readDevNonce());
+            return true;
+        }
+
+        LOG_E("LoRaWAN: join OTAA falló (%d), intento %u/%u.",
+              state, attempt, JOIN_MAX_ATTEMPTS);
+
+        if (attempt < JOIN_MAX_ATTEMPTS) {
+            vTaskDelay(pdMS_TO_TICKS(JOIN_RETRY_DELAY_MS));
+        }
+    }
+    return false;
+}
+
+static void forceRejoin() {
+    LOG_W("LoRaWAN: forzando rejoin (clearSession + join).");
+    node.clearSession();
+    (void)joinNetwork();
 }
 
 // =================================================================================================
@@ -341,6 +399,7 @@ static void loadSession() {
 //   0x03 SET_TX_POWER      : [1] int8 dBm
 //   0x04 SET_DATARATE      : [1] uint8 data rate (only meaningful with ADR off)
 //   0x05 REBOOT            : restart the MCU
+//   0x06 REJOIN            : clear the session and join again
 //   0x07 SET_ADR           : [1] 0 = off, 1 = on
 
 static void handleDownlink(const uint8_t* data, size_t len, const LoRaWANEvent_t& ev) {
@@ -381,6 +440,10 @@ static void handleDownlink(const uint8_t* data, size_t len, const LoRaWANEvent_t
             delay(100);
             ESP.restart();
             break;
+        case 0x06:
+            LOG_I("CMD: rejoin solicitado.");
+            forceRejoin();
+            break;
         case 0x07:
             if (len < 2) { LOG_W("CMD SET_ADR incompleto."); break; }
             node.setADR(data[1] != 0);
@@ -398,8 +461,6 @@ void initLoRa() {
         LOG_E("LoRaWAN: radio.begin() falló (%d).", state);
     }
 
-    loadSession();
-
     state = node.beginOTAA(lorawan_eui_to_uint64(JOINEUI),
                            lorawan_eui_to_uint64(DEVEUI),
                            NWKKEY, APPKEY);
@@ -407,36 +468,21 @@ void initLoRa() {
         LOG_E("LoRaWAN: beginOTAA() falló (%d).", state);
     }
 
+    // Restore the DevNonce/JoinNonce AFTER beginOTAA(): beginOTAA() clears the nonces
+    // buffer and sets the checksum that setBufferNonces() validates.
+    loadNonces();
+
     // Apply the TX power before joining so the JoinRequest also uses it.
     node.setTxPower(20);
 
-    state = node.activateOTAA();
-
-    // Persist the advanced DevNonce even if the join failed, so it keeps increasing
-    // across reboots (prevents the network server rejecting it as "reuse_dev_nonce").
-    saveNonces();
-
-    if (state == RADIOLIB_LORAWAN_NEW_SESSION ||
-        state == RADIOLIB_LORAWAN_SESSION_RESTORED) {
-        // IMPORTANT: apply the datarate AFTER activation. During the join, RadioLib's
-        // selectChannels() forces the join DR (DR0 on US915) and does not restore it;
-        // without this the first uplink exceeds the payload limit at DR0 and fails with
-        // RADIOLIB_ERR_PACKET_TOO_LONG (-4).
-        node.setADR(false);        // mirrors the old LMIC_setAdrMode(0)
-        node.setDatarate(3);       // US915 DR3 = SF7/125 kHz (old US915_DR_SF7)
-        node.setTxPower(20);       // old LMIC_setDrTxpow(..., 20)
-        LOG_I("LoRaWAN: sesión OTAA %s (max payload %u B).",
-              (state == RADIOLIB_LORAWAN_NEW_SESSION) ? "nueva" : "restaurada",
-              (unsigned)node.getMaxPayloadLen());
-        saveSession();
-    } else {
-        LOG_E("LoRaWAN: join OTAA falló (%d).", state);
-    }
+    // Rejoin on every boot (no session persistence).
+    (void)joinNetwork();
 }
 
 void tareaLoRa(void *pvParameters) {
     Fragmento frag;
     uint8_t downBuf[RADIOLIB_LORAWAN_MAX_PAYLOAD_SIZE];
+    uint8_t consecutiveFailures = 0;
 
     while (true) {
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
@@ -460,7 +506,12 @@ void tareaLoRa(void *pvParameters) {
 
             if (state < RADIOLIB_ERR_NONE) {
                 LOG_E("LoRa: sendReceive() error %d", state);
+                if (++consecutiveFailures >= REJOIN_FAIL_THRESHOLD) {
+                    consecutiveFailures = 0;
+                    forceRejoin();
+                }
             } else {
+                consecutiveFailures = 0;
                 if (state > 0) {
                     LOG_I("LoRa: TX completo (DR=%u, cnt=%lu) + downlink de %u bytes (FPort %u).",
                           evUp.datarate, (unsigned long)evUp.fCnt, (unsigned)downLen, evDown.fPort);
@@ -471,7 +522,6 @@ void tareaLoRa(void *pvParameters) {
                     LOG_I("LoRa: TX completo (DR=%u, cnt=%lu), sin downlink.",
                           evUp.datarate, (unsigned long)evUp.fCnt);
                 }
-                saveSession();
             }
         }
     }
