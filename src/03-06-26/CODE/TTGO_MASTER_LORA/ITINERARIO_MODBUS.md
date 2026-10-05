@@ -106,11 +106,11 @@ extra_scripts =
 
 ## 7. Estado de esta carpeta
 
-- Código local basado en `main` (`3439a67`) con el intervalo de polling extendido a
+- Código local basado en `main` con el intervalo de polling extendido a
   `POLL_INTERVAL_MS = 600000` (10 min). **Sin auto-restart.**
-- `origin/main` (`4a03fc7`) añade `-D SINGLE_CHANNEL_MODE` + `pre:apply_lmic_patch.py`
-  (gateway de canal único); ese commit todavía no está en este checkout local.
-- La tabla `kRequests[]`, el flujo y el payload son idénticos entre ambas.
+- Incluye `-D SINGLE_CHANNEL_MODE` + `pre:apply_lmic_patch.py` (gateway de canal único),
+  ya integrado en `main` (commit `4a03fc7`, merge `9eb61bb`).
+- La tabla `kRequests[]`, el flujo y el payload son idénticos a la versión 630.
 
 ### Requisito local NO versionado: `include/loraconfig.h`
 
