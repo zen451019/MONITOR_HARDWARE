@@ -9,3 +9,4 @@
 *.png  binary
 *.pdf  binary
 *.bin  binary
+*.ipynb binary

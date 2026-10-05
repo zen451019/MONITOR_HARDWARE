@@ -69,3 +69,7 @@ fp-info-cache
 # Backups
 *.zip
 *.7z
+
+# Notebooks (Jupyter)
+*.ipynb
+.ipynb_checkpoints/
