@@ -11,3 +11,61 @@
 **_autosave-*
 fp-info-cache
 *.rar
+
+# ===== Dejar de versionar artefactos generados =====
+!.gitattributes
+
+# Build / IDE
+**/.pio/
+**/.vscode/
+**/__pycache__/
+
+# Secretos / artefactos de firmware
+**/include/loraconfig.h
+**/firmware.bin
+**/firmware.elf
+**/bootloader.bin
+**/partitions.bin
+
+# KiCad: solo fuentes; fuera salidas de fabricación
+**/output/
+**/out/
+**/out-put/
+**/*-OUT/
+**/gerber*/
+**/gerbers/
+*.gbr
+*.gbrjob
+*.drl
+*.gko
+*.gm1
+*.gto
+*.gbo
+*.gts
+*.gbs
+*.gtl
+*.gbl
+*.g2l
+*.g3l
+*.gtp
+*.gbp
+*.gbr_iso.DXF
+*.drl_svg.svg
+*.dxf
+*.DXF
+*.ezd
+*.FlatPrj
+*.step
+*.stl
+*.kicad_prl
+*-backups/
+**/bom/
+
+# Docs generadas / logs
+**/html/
+**/latex/
+**/test_log/
+
+# Backups
+*.zip
+*.7z

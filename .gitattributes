@@ -1,0 +1,11 @@
+*.cpp  text eol=lf
+*.h    text eol=lf
+*.ini  text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.kicad_pcb text
+*.kicad_sch text
+*.kicad_pro text
+*.png  binary
+*.pdf  binary
+*.bin  binary
