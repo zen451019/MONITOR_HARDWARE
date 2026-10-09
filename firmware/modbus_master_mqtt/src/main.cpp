@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <WiFi.h>
+#include <AsyncMqttClient.h>
 #include <cstdint>
 #include <ctime>
 #include "ModbusAPI.h"
@@ -56,6 +57,14 @@ QueueHandle_t queueMqtt;
 // Estado de red (lo usara MQTT en el Paso 3).
 volatile bool g_wifiReady = false;
 volatile uint8_t g_wifiReason = 0;
+
+// Estado MQTT (Paso 3).
+AsyncMqttClient mqttClient;
+volatile bool g_mqttReady = false;
+volatile bool g_mqttConnecting = false;
+
+// Buffers persistentes (setWill/setServer guardan el puntero, no copian).
+static char g_statusTopic[64];
 
 // =================================================================================================
 // Main polling task - lee bloques, decodifica senales, encola un MeasureFrame
@@ -144,7 +153,7 @@ void mainPollingTask(void *pvParameters) {
 // Network task - WiFi (Paso 2). AsyncMqttClient + JSON se agregan en los pasos siguientes.
 // =================================================================================================
 
-// Handler de eventos: solo banderas (NO loguear aqui: corre en el task de WiFi).
+// Handler de eventos WiFi: solo banderas (NO loguear aqui: corre en el task de WiFi).
 static void wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
@@ -159,37 +168,97 @@ static void wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
     }
 }
 
+// Callbacks MQTT: solo banderas + birth (NO loguear aqui: task AsyncTCP).
+static void mqtt_onConnect(bool sessionPresent) {
+    (void)sessionPresent;
+    g_mqttConnecting = false;
+    g_mqttReady = true;
+    mqttClient.publish(g_statusTopic, 0, true, "online");   // birth (retained)
+}
+
+static void mqtt_onDisconnect(AsyncMqttClientDisconnectReason reason) {
+    (void)reason;
+    g_mqttConnecting = false;
+    g_mqttReady = false;
+}
+
+static void mqtt_setup() {
+    snprintf(g_statusTopic, sizeof(g_statusTopic), "%s/status", MQTT_BASE);
+
+    mqttClient.setClientId(MQTT_CLIENT);
+    mqttClient.setKeepAlive(15);
+    mqttClient.setCleanSession(true);
+    if (MQTT_USER[0] != '\0') {
+        mqttClient.setCredentials(MQTT_USER, MQTT_PASS);
+    }
+    mqttClient.setWill(g_statusTopic, 0, true, "offline");   // LWT (retained)
+    mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+    mqttClient.onConnect(mqtt_onConnect);
+    mqttClient.onDisconnect(mqtt_onDisconnect);
+}
+
 void tareaRed(void *pvParameters) {
     MeasureFrame frame;
-    bool     prevReady = false;
-    uint32_t discSince = 0;
+    bool     prevWifi = false;
+    bool     prevMqtt = false;
+    uint32_t wifiDiscSince = 0;
+    uint32_t mqttDiscSince = 0;
+    uint32_t mqttBackoff   = 2000;
 
     while (true) {
-        const bool ready = (WiFi.status() == WL_CONNECTED);
+        const bool wifi = (WiFi.status() == WL_CONNECTED);
+        const bool mqtt = g_mqttReady;
 
-        if (ready && !prevReady) {
+        // --- WiFi: transiciones + reconexion suave ---
+        if (wifi && !prevWifi) {
             LOG_I("WiFi: IP %s (RSSI %d dBm)",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
-        } else if (!ready && prevReady) {
+        } else if (!wifi && prevWifi) {
             LOG_W("WiFi: desconectado, reason=%u", (unsigned)g_wifiReason);
         }
-        prevReady = ready;
+        prevWifi = wifi;
 
-        if (ready) {
-            discSince = 0;
+        if (wifi) {
+            wifiDiscSince = 0;
         } else {
-            if (discSince == 0) {
-                discSince = millis();
-            } else if (millis() - discSince > 10000) {
+            mqttDiscSince = 0;
+            mqttBackoff = 2000;
+            if (wifiDiscSince == 0) {
+                wifiDiscSince = millis();
+            } else if (millis() - wifiDiscSince > 10000) {
                 LOG_W("WiFi: 10 s sin conexion, re-lanzando begin()...");
                 WiFi.begin(WIFI_SSID, WIFI_PASS);
-                discSince = millis();
+                wifiDiscSince = millis();
             }
         }
 
+        // --- MQTT: transiciones + reconexion con backoff ---
+        if (mqtt && !prevMqtt) {
+            LOG_I("MQTT: conectado a %s:%u", MQTT_HOST, (unsigned)MQTT_PORT);
+        } else if (!mqtt && prevMqtt) {
+            LOG_W("MQTT: desconectado, se reintentara.");
+        }
+        prevMqtt = mqtt;
+
+        if (wifi && !mqtt && !g_mqttConnecting) {
+            if (mqttDiscSince == 0) {
+                mqttDiscSince = millis();
+            } else if (millis() - mqttDiscSince >= mqttBackoff) {
+                LOG_I("MQTT: conectando a %s:%u...", MQTT_HOST, (unsigned)MQTT_PORT);
+                g_mqttConnecting = true;
+                mqttClient.connect();
+                mqttDiscSince = millis();
+                mqttBackoff = (mqttBackoff * 2 > 30000) ? 30000 : mqttBackoff * 2;
+            }
+        } else if (mqtt) {
+            mqttDiscSince = 0;
+            mqttBackoff = 2000;
+        }
+
+        // --- Drenar la cola de datos (JSON en el Paso 4) ---
         if (xQueueReceive(queueMqtt, &frame, pdMS_TO_TICKS(100)) == pdTRUE) {
-            LOG_I("Net[stub]: frame id=%u ts=%lu sensores=%u (MQTT pendiente)",
-                  frame.id, (unsigned long)frame.ts, frame.count);
+            LOG_I("Net[stub]: frame id=%u ts=%lu sensores=%u (MQTT=%d)",
+                  frame.id, (unsigned long)frame.ts, frame.count, (int)mqtt);
             for (uint8_t i = 0; i < frame.count; ++i) {
                 const SensorValues& sv = frame.sensors[i];
                 LOG_D("  sensor=%u ch=%u v0=%.2f v1=%.2f v2=%.2f v3=%.2f",
@@ -229,6 +298,10 @@ void setup() {
     WiFi.onEvent(wifi_event, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     LOG_I("WiFi: conectando a '%s'...", WIFI_SSID);
+
+    // MQTT (Paso 3)
+    mqtt_setup();
+    LOG_I("MQTT: broker %s:%u, base '%s'", MQTT_HOST, (unsigned)MQTT_PORT, MQTT_BASE);
 
     xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 8192, NULL, 3, &g_pollTaskHandle, 0);
     xTaskCreatePinnedToCore(tareaRed, "NetTask", 8192, NULL, 5, NULL, 1);
