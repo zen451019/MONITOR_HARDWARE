@@ -10,6 +10,7 @@
 #include <SPI.h>
 #include <WiFi.h>
 #include <AsyncMqttClient.h>
+#include <ArduinoJson.h>
 #include <cstdint>
 #include <ctime>
 #include "ModbusAPI.h"
@@ -64,7 +65,14 @@ volatile bool g_mqttReady = false;
 volatile bool g_mqttConnecting = false;
 
 // Buffers persistentes (setWill/setServer guardan el puntero, no copian).
-static char g_statusTopic[64];
+static char g_statusTopic[128];
+static char g_dataTopic[128];
+
+// Nombres de sensor (indice = sensorId), espejo de codec.js.
+static const char* const SENSOR_NAMES[8] = {
+    "energy", "voltage", "current", "real_power",
+    "apparent_power", "reactive_power", "power_factor", "frequency"
+};
 
 // =================================================================================================
 // Main polling task - lee bloques, decodifica senales, encola un MeasureFrame
@@ -183,7 +191,11 @@ static void mqtt_onDisconnect(AsyncMqttClientDisconnectReason reason) {
 }
 
 static void mqtt_setup() {
-    snprintf(g_statusTopic, sizeof(g_statusTopic), "%s/status", MQTT_BASE);
+    // Topic estilo ChirpStack: application/<app>/device/<dev>/event/<event>
+    snprintf(g_statusTopic, sizeof(g_statusTopic),
+             "application/%s/device/%s/event/status", MQTT_APP, MQTT_DEVICE);
+    snprintf(g_dataTopic, sizeof(g_dataTopic),
+             "application/%s/device/%s/event/up", MQTT_APP, MQTT_DEVICE);
 
     mqttClient.setClientId(MQTT_CLIENT);
     mqttClient.setKeepAlive(15);
@@ -195,6 +207,35 @@ static void mqtt_setup() {
     mqttClient.setServer(MQTT_HOST, MQTT_PORT);
     mqttClient.onConnect(mqtt_onConnect);
     mqttClient.onDisconnect(mqtt_onDisconnect);
+}
+
+// Construye el JSON del frame y lo publica en <base>/data (QoS 0, no retained).
+static void publish_frame(const MeasureFrame& frame) {
+    JsonDocument doc;
+    doc["id"] = frame.id;
+    doc["ts"] = frame.ts;
+
+    JsonObject meas = doc["measurements"].to<JsonObject>();
+    for (uint8_t i = 0; i < frame.count; ++i) {
+        const SensorValues& sv = frame.sensors[i];
+        const char* name = (sv.sensorId < 8) ? SENSOR_NAMES[sv.sensorId] : "unknown";
+
+        JsonObject chans = meas[name].to<JsonObject>();
+        for (uint8_t c = 0; c < sv.channels; ++c) {
+            char key[4];
+            snprintf(key, sizeof(key), "ch%u", (unsigned)(c + 1));
+            chans[key] = sv.value[c];
+        }
+    }
+
+    char buf[768];
+    size_t n = serializeJson(doc, buf, sizeof(buf));
+    if (n > 0 && n < sizeof(buf)) {
+        mqttClient.publish(g_dataTopic, 0, false, buf, n);
+        LOG_I("MQTT: data publicado (%zu bytes)", n);
+    } else {
+        LOG_W("MQTT: JSON no cabe (%zu bytes)", n);
+    }
 }
 
 void tareaRed(void *pvParameters) {
@@ -255,15 +296,12 @@ void tareaRed(void *pvParameters) {
             mqttBackoff = 2000;
         }
 
-        // --- Drenar la cola de datos (JSON en el Paso 4) ---
+        // --- Drenar la cola de datos: publicar JSON si hay MQTT ---
         if (xQueueReceive(queueMqtt, &frame, pdMS_TO_TICKS(100)) == pdTRUE) {
-            LOG_I("Net[stub]: frame id=%u ts=%lu sensores=%u (MQTT=%d)",
-                  frame.id, (unsigned long)frame.ts, frame.count, (int)mqtt);
-            for (uint8_t i = 0; i < frame.count; ++i) {
-                const SensorValues& sv = frame.sensors[i];
-                LOG_D("  sensor=%u ch=%u v0=%.2f v1=%.2f v2=%.2f v3=%.2f",
-                      sv.sensorId, sv.channels,
-                      sv.value[0], sv.value[1], sv.value[2], sv.value[3]);
+            if (mqtt) {
+                publish_frame(frame);
+            } else {
+                LOG_D("Net: frame id=%u descartado (MQTT no conectado)", frame.id);
             }
         }
     }
@@ -301,7 +339,7 @@ void setup() {
 
     // MQTT (Paso 3)
     mqtt_setup();
-    LOG_I("MQTT: broker %s:%u, base '%s'", MQTT_HOST, (unsigned)MQTT_PORT, MQTT_BASE);
+    LOG_I("MQTT: broker %s:%u, up topic '%s'", MQTT_HOST, (unsigned)MQTT_PORT, g_dataTopic);
 
     xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 8192, NULL, 3, &g_pollTaskHandle, 0);
     xTaskCreatePinnedToCore(tareaRed, "NetTask", 8192, NULL, 5, NULL, 1);
