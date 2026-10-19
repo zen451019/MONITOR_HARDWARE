@@ -13,6 +13,8 @@
 #include <ArduinoJson.h>
 #include <cstdint>
 #include <ctime>
+#include <time.h>
+#include <esp_random.h>
 #include "ModbusAPI.h"
 #include "ModbusConfig.h"
 #include "netconfig.h"
@@ -209,26 +211,110 @@ static void mqtt_setup() {
     mqttClient.onDisconnect(mqtt_onDisconnect);
 }
 
-// Construye el JSON del frame y lo publica en <base>/data (QoS 0, no retained).
-static void publish_frame(const MeasureFrame& frame) {
-    JsonDocument doc;
-    doc["id"] = frame.id;
-    doc["ts"] = frame.ts;
+// UUID v4-ish generado con el RNG del ESP32.
+static void gen_uuid(char* out, size_t n) {
+    uint32_t r0 = esp_random(), r1 = esp_random(), r2 = esp_random(), r3 = esp_random();
+    snprintf(out, n, "%08lx-%04lx-%04lx-%04lx-%04lx%08lx",
+             (unsigned long)r0,
+             (unsigned long)((r1 >> 16) & 0xFFFF), (unsigned long)(r1 & 0xFFFF),
+             (unsigned long)((r2 >> 16) & 0xFFFF), (unsigned long)(r2 & 0xFFFF),
+             (unsigned long)r3);
+}
 
-    JsonObject meas = doc["measurements"].to<JsonObject>();
+// Timestamp ISO-8601 (UTC). Sin NTP sera 1970; se corrige en el paso de NTP.
+static void iso_now(char* out, size_t n) {
+    time_t t = time(nullptr);
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    strftime(out, n, "%Y-%m-%dT%H:%M:%S.000Z", &tmv);
+}
+
+// Publica el frame en <base>/data con el formato del evento "up" de ChirpStack.
+static void publish_frame(const MeasureFrame& frame) {
+    char nowIso[32];
+    iso_now(nowIso, sizeof(nowIso));
+
+    char uuid[40];
+    gen_uuid(uuid, sizeof(uuid));
+
+    JsonDocument doc;
+
+    doc["deduplicationId"] = uuid;
+    doc["time"] = nowIso;
+
+    JsonObject di = doc["deviceInfo"].to<JsonObject>();
+    di["tenantId"]           = "7ed4dd52-7046-400b-9b1d-b8449700ddeb";
+    di["tenantName"]         = "Monitor";
+    di["applicationId"]      = "4fee0c86-284b-4279-b490-0fca8a301fb8";
+    di["applicationName"]    = "test";
+    di["deviceProfileId"]    = "4e52970c-5a70-4a03-b434-b78f4ee93bf0";
+    di["deviceProfileName"]  = "POTENCIA US915";
+    di["deviceName"]         = "Test";
+    di["devEui"]             = "1234567890123456";
+    di["deviceClassEnabled"] = "CLASS_A";
+    di["tags"].to<JsonObject>();
+
+    doc["devAddr"]   = "26013a9f";
+    doc["adr"]       = false;
+    doc["dr"]        = 3;
+    doc["fCnt"]      = frame.id;
+    doc["fPort"]     = 1;
+    doc["confirmed"] = false;
+    doc["data"]      = "";
+
+    JsonObject obj = doc["object"].to<JsonObject>();
+    obj["relative_timestamp"] = frame.ts;
+
+    JsonObject meas = obj["measurements"].to<JsonObject>();
+    JsonArray  act  = obj["active_sensors"].to<JsonArray>();
+
     for (uint8_t i = 0; i < frame.count; ++i) {
         const SensorValues& sv = frame.sensors[i];
         const char* name = (sv.sensorId < 8) ? SENSOR_NAMES[sv.sensorId] : "unknown";
+        act.add(name);
 
         JsonObject chans = meas[name].to<JsonObject>();
         for (uint8_t c = 0; c < sv.channels; ++c) {
             char key[4];
             snprintf(key, sizeof(key), "ch%u", (unsigned)(c + 1));
-            chans[key] = sv.value[c];
+            JsonArray arr = chans[key].to<JsonArray>();
+            JsonObject e = arr.add<JsonObject>();
+            e["value"] = sv.value[c];
+            e["time"]  = nowIso;
         }
     }
 
-    char buf[768];
+    obj["arrival_date"] = nowIso;
+    obj["id"] = frame.id;
+
+    JsonArray rx = doc["rxInfo"].to<JsonArray>();
+    JsonObject rx0 = rx.add<JsonObject>();
+    rx0["gatewayId"] = "a84041fdfe2764b6";
+    rx0["uplinkId"]  = (uint32_t)esp_random();
+    rx0["gwTime"]    = nowIso;
+    rx0["nsTime"]    = nowIso;
+    rx0["rssi"]      = -12;
+    rx0["snr"]       = 13.8;
+    rx0["channel"]   = 4;
+    rx0["rfChain"]   = 1;
+    JsonObject loc = rx0["location"].to<JsonObject>();
+    loc["latitude"]  = 4.6;
+    loc["longitude"] = 3.2;
+    loc["altitude"]  = 4.199999809265137;
+    rx0["context"]   = "ARg8Xw==";
+    rx0["crcStatus"] = "CRC_OK";
+
+    JsonObject tx = doc["txInfo"].to<JsonObject>();
+    tx["frequency"] = 914300000;
+    JsonObject mod = tx["modulation"].to<JsonObject>();
+    JsonObject lora = mod["lora"].to<JsonObject>();
+    lora["bandwidth"]       = 125000;
+    lora["spreadingFactor"] = 7;
+    lora["codeRate"]        = "CR_4_5";
+
+    doc["regionConfigId"] = "us915_7";
+
+    static char buf[4096];
     size_t n = serializeJson(doc, buf, sizeof(buf));
     if (n > 0 && n < sizeof(buf)) {
         mqttClient.publish(g_dataTopic, 0, false, buf, n);
