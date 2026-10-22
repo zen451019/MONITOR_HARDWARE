@@ -1,0 +1,3 @@
+org.eclipse.tahu.protobuf.Payload.metrics max_count:24
+org.eclipse.tahu.protobuf.Payload.Metric.name max_size:40
+org.eclipse.tahu.protobuf.Payload.Metric.string_value max_size:40

@@ -1,52 +1,29 @@
 /**
  * @file main.cpp
- * @brief Modbus RTU Master -> MQTT (WiFi) - variante sin LoRaWAN.
- * @details Lectura Modbus por BLOQUES (varias senales en una sola peticion) +
- *          API sincrona delgada. La tarea de polling decodifica valores y los
- *          entrega a la tarea MQTT por cola. MQTT (WiFi + JSON) en pasos siguientes.
+ * @brief Modbus RTU Master -> Sparkplug B (WiFi/MQTT).
+ * @details Lectura Modbus por bloques, un MeasureFrame por Device, y publicacion
+ *          Sparkplug B Device-level con nanopb.
  */
 
 #include <Arduino.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <AsyncMqttClient.h>
-#include <ArduinoJson.h>
+
 #include <cstdint>
+#include <cstring>
 #include <ctime>
 #include <time.h>
-#include <esp_random.h>
+#include <esp_timer.h>
+
 #include "ModbusAPI.h"
 #include "ModbusConfig.h"
+#include "DevicesConfig.h"
+#include "SparkplugConfig.h"
+#include "SparkplugB.h"
+#include "MeasureFrame.h"
 #include "netconfig.h"
 #include "Log.h"
-
-// =================================================================================================
-// Data structures
-// =================================================================================================
-
-#define MQTT_MAX_SENSORS   8
-#define MQTT_MAX_CHANNELS  4
-
-struct SensorValues {
-    uint8_t sensorId;
-    uint8_t channels;
-    float   value[MQTT_MAX_CHANNELS];
-};
-
-struct MeasureFrame {
-    uint8_t      id;
-    uint32_t     ts;
-    uint8_t      count;
-    SensorValues sensors[MQTT_MAX_SENSORS];
-};
-
-// Acumulador por tipo de sensor durante un ciclo de polling.
-struct SensorAcc {
-    bool    present;
-    bool    failed;
-    uint8_t channels;
-    float   value[MQTT_MAX_CHANNELS];
-};
 
 // =================================================================================================
 // Runtime state
@@ -57,113 +34,144 @@ static TaskHandle_t g_pollTaskHandle = NULL;
 
 QueueHandle_t queueMqtt;
 
-// Estado de red (lo usara MQTT en el Paso 3).
 volatile bool g_wifiReady = false;
 volatile uint8_t g_wifiReason = 0;
 
-// Estado MQTT (Paso 3).
 AsyncMqttClient mqttClient;
 volatile bool g_mqttReady = false;
 volatile bool g_mqttConnecting = false;
+volatile bool g_needBirth = false;
+volatile bool g_birthDone = false;
+volatile bool g_ncmdSubscribed = false;
 
-// Buffers persistentes (setWill/setServer guardan el puntero, no copian).
-static char g_statusTopic[128];
-static char g_dataTopic[128];
+static uint32_t g_subscribeSentAt = 0;
 
-// Nombres de sensor (indice = sensorId), espejo de codec.js.
-static const char* const SENSOR_NAMES[8] = {
-    "energy", "voltage", "current", "real_power",
-    "apparent_power", "reactive_power", "power_factor", "frequency"
+static const spb::Config kSpbCfg = {
+    SPB_GROUP_ID,
+    SPB_EDGE_NODE,
+    SPB_NTP1,
+    SPB_NTP2,
 };
 
+// NCMD puede llegar fragmentado; se acumula en el callback (tarea AsyncTCP).
+static uint8_t g_ncmdBuf[512];
+static size_t  g_ncmdExpected = 0;
+
+static volatile bool g_lastCycleOk = true;
+
+static char g_clientId[40];
+
+struct SensorAcc {
+    uint8_t channels;
+    uint8_t validMask;
+    float   value[MQTT_MAX_CHANNELS];
+};
+
+static spb::NodeHealth makeHealth(bool scanOk) {
+    spb::NodeHealth h;
+    h.uptimeMs      = (uint64_t)(esp_timer_get_time() / 1000);
+    h.rssiDbm       = (int32_t)WiFi.RSSI();
+    h.freeHeapBytes = (uint32_t)ESP.getFreeHeap();
+    h.scanOk        = scanOk;
+    return h;
+}
+
 // =================================================================================================
-// Main polling task - lee bloques, decodifica senales, encola un MeasureFrame
+// Main polling task - recorre Devices, lee bloques y encola un frame por Device
 // =================================================================================================
 
 void mainPollingTask(void *pvParameters) {
-    uint8_t msgId = 0;
+    (void)pvParameters;
+
+    uint8_t  failStreak[kMaxDevices] = {};
+    uint32_t cycleId = 0;
 
     while (true) {
-        SensorAcc acc[8];
-        for (auto& a : acc) { a = SensorAcc{}; }
+        const uint64_t ts = spb::nowMs();
+        bool cycleOk = true;
 
-        LOG_I("--- Ciclo de consulta (msgId=%u, %zu bloques) ---", msgId, kBlockCount);
+        for (uint8_t d = 0; d < kDeviceCount; ++d) {
+            const DeviceConfig& dev = kDevices[d];
 
-        for (size_t bi = 0; bi < kBlockCount; ++bi) {
-            const ModbusBlock& blk = kBlocks[bi];
-            uint32_t timeout = lookupTimeout(blk.slaveID);
+            SensorAcc acc[MQTT_MAX_SENSORS] = {};
+            bool anyOk = false;
+            bool allOk = true;
 
-            ModbusApiResult r = modbus_api_read_registers(
-                blk.slaveID, blk.functionCode, blk.startAddr, blk.numRegs, timeout);
+            for (size_t b = 0; b < dev.blockCount; ++b) {
+                const ModbusBlock& blk = dev.blocks[b];
 
-            if (r.error_code != ModbusApiError::SUCCESS) {
-                LOG_W("Bloque %zu (0x%04X x%u) fallo: err=%u exc=0x%02X",
-                      bi, blk.startAddr, blk.numRegs,
-                      (uint8_t)r.error_code, r.exception_code);
-                for (size_t si = 0; si < kSignalCount; ++si) {
-                    if (kSignals[si].blockIndex == bi) {
-                        acc[kSignals[si].sensorType].failed = true;
-                    }
+                ModbusApiResult r = modbus_api_read_registers(
+                    dev.slaveId, blk.functionCode, blk.startAddr,
+                    blk.numRegs, dev.timeoutMs);
+
+                if (r.error_code != ModbusApiError::SUCCESS) {
+                    LOG_W("Device %s bloque %zu (0x%04X x%u) fallo: err=%u exc=0x%02X",
+                          dev.deviceId, b, blk.startAddr, blk.numRegs,
+                          (uint8_t)r.error_code, r.exception_code);
+                    allOk = false;
+                    continue;
                 }
-                continue;
+
+                anyOk = true;
+
+                for (size_t si = 0; si < dev.signalCount; ++si) {
+                    const ModbusSignal& s = dev.signals[si];
+                    if (s.blockIndex != b || s.channel >= MQTT_MAX_CHANNELS) continue;
+
+                    SensorAcc& a = acc[s.sensorType];
+                    a.validMask |= (uint8_t)(1u << s.channel);
+                    if ((uint8_t)(s.channel + 1) > a.channels) {
+                        a.channels = (uint8_t)(s.channel + 1);
+                    }
+                    a.value[s.channel] = s.decode(r.data, r.data_len);
+                }
+
+                vTaskDelay(pdMS_TO_TICKS(10));   // margen RS485 entre bloques
             }
 
-            LOG_D("Bloque %zu (0x%04X x%u) OK: %zu bytes",
-                  bi, blk.startAddr, blk.numRegs, r.data_len);
-
-            for (size_t si = 0; si < kSignalCount; ++si) {
-                const ModbusSignal& s = kSignals[si];
-                if (s.blockIndex != bi) continue;
-
-                SensorAcc& a = acc[s.sensorType];
-                a.present = true;
-                if ((uint8_t)(s.channel + 1) > a.channels) a.channels = (uint8_t)(s.channel + 1);
-
-                a.value[s.channel] = s.decode(r.data, r.data_len);
+            if (!allOk) cycleOk = false;
+            if (anyOk) {
+                failStreak[d] = 0;
+            } else if (failStreak[d] < 255) {
+                failStreak[d]++;
             }
 
-            vTaskDelay(pdMS_TO_TICKS(10));   // margen RS485 entre bloques
-        }
+            MeasureFrame frame{};
+            frame.deviceIndex = d;
+            frame.cycleId     = cycleId;
+            frame.tsMs        = ts;
+            frame.scanOk      = allOk;
+            frame.failStreak  = failStreak[d];
+            frame.cycleEnd    = (d == (uint8_t)(kDeviceCount - 1));
+            frame.cycleOk     = frame.cycleEnd ? cycleOk : false;
 
-        MeasureFrame frame{};
-        frame.id    = msgId;
-        frame.ts    = (uint32_t)time(nullptr);
-        frame.count = 0;
+            for (uint8_t st = 0; st < MQTT_MAX_SENSORS; ++st) {
+                if (acc[st].channels == 0) continue;
+                if (frame.count >= MQTT_MAX_SENSORS) break;
 
-        for (uint8_t st = 0; st < 8; ++st) {
-            if (acc[st].failed) {
-                LOG_W("SensorType %u: descartado (fallo de bloque)", st);
-                continue;
+                SensorValues& sv = frame.sensors[frame.count++];
+                sv.sensorId  = st;
+                sv.channels  = acc[st].channels;
+                sv.validMask = acc[st].validMask;
+                for (uint8_t c = 0; c < MQTT_MAX_CHANNELS; ++c) {
+                    sv.value[c] = (c < acc[st].channels) ? acc[st].value[c] : 0.0f;
+                }
             }
-            if (!acc[st].present) continue;
-            if (frame.count >= MQTT_MAX_SENSORS) break;
 
-            SensorValues& sv = frame.sensors[frame.count++];
-            sv.sensorId = st;
-            sv.channels = acc[st].channels;
-            for (uint8_t c = 0; c < MQTT_MAX_CHANNELS; ++c) {
-                sv.value[c] = (c < acc[st].channels) ? acc[st].value[c] : 0.0f;
-            }
-        }
-
-        if (frame.count > 0) {
-            LOG_I("Encolando frame MQTT (id=%u, %u sensores)", frame.id, frame.count);
             if (xQueueSend(queueMqtt, &frame, pdMS_TO_TICKS(100)) != pdTRUE) {
-                LOG_W("Cola MQTT llena; frame descartado.");
+                LOG_W("Cola MQTT llena; frame de %s descartado", dev.deviceId);
             }
         }
 
-        ++msgId;
-
+        ++cycleId;
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(g_pollIntervalMs));
     }
 }
 
 // =================================================================================================
-// Network task - WiFi (Paso 2). AsyncMqttClient + JSON se agregan en los pasos siguientes.
+// Network task - WiFi + MQTT + Sparkplug lifecycle
 // =================================================================================================
 
-// Handler de eventos WiFi: solo banderas (NO loguear aqui: corre en el task de WiFi).
 static void wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
@@ -178,154 +186,112 @@ static void wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
     }
 }
 
-// Callbacks MQTT: solo banderas + birth (NO loguear aqui: task AsyncTCP).
 static void mqtt_onConnect(bool sessionPresent) {
     (void)sessionPresent;
     g_mqttConnecting = false;
-    g_mqttReady = true;
-    mqttClient.publish(g_statusTopic, 0, true, "online");   // birth (retained)
+    g_mqttReady      = true;
+    g_ncmdSubscribed = false;
+    g_needBirth      = true;
+    g_birthDone      = false;
 }
 
 static void mqtt_onDisconnect(AsyncMqttClientDisconnectReason reason) {
     (void)reason;
     g_mqttConnecting = false;
-    g_mqttReady = false;
+    g_mqttReady      = false;
+    g_needBirth      = false;
+    g_birthDone      = false;
+    g_ncmdSubscribed = false;
+}
+
+static void mqtt_onSubscribe(uint16_t packetId, uint8_t qos) {
+    (void)packetId;
+    (void)qos;
+    g_ncmdSubscribed = true;
+}
+
+static void mqtt_onMessage(char* topic, char* payload,
+                           AsyncMqttClientMessageProperties properties,
+                           size_t len, size_t index, size_t total) {
+    (void)properties;
+
+    if (strcmp(topic, spb::ncmdTopic()) != 0) return;
+
+    if (index == 0) g_ncmdExpected = total;
+    if (total > sizeof(g_ncmdBuf) || g_ncmdExpected != total) {
+        g_ncmdExpected = 0;
+        return;
+    }
+    if (index + len > sizeof(g_ncmdBuf)) return;
+
+    memcpy(g_ncmdBuf + index, payload, len);
+
+    if (index + len == total) {
+        spb::handleCommand(g_ncmdBuf, total);
+        g_ncmdExpected = 0;
+    }
 }
 
 static void mqtt_setup() {
-    // Topic estilo ChirpStack: application/<app>/device/<dev>/event/<event>
-    snprintf(g_statusTopic, sizeof(g_statusTopic),
-             "application/%s/device/%s/event/status", MQTT_APP, MQTT_DEVICE);
-    snprintf(g_dataTopic, sizeof(g_dataTopic),
-             "application/%s/device/%s/event/up", MQTT_APP, MQTT_DEVICE);
-
-    mqttClient.setClientId(MQTT_CLIENT);
+    mqttClient.setClientId(g_clientId);
     mqttClient.setKeepAlive(15);
     mqttClient.setCleanSession(true);
+
     if (MQTT_USER[0] != '\0') {
         mqttClient.setCredentials(MQTT_USER, MQTT_PASS);
     }
-    mqttClient.setWill(g_statusTopic, 0, true, "offline");   // LWT (retained)
+
     mqttClient.setServer(MQTT_HOST, MQTT_PORT);
     mqttClient.onConnect(mqtt_onConnect);
     mqttClient.onDisconnect(mqtt_onDisconnect);
+    mqttClient.onSubscribe(mqtt_onSubscribe);
+    mqttClient.onMessage(mqtt_onMessage);
 }
 
-// UUID v4-ish generado con el RNG del ESP32.
-static void gen_uuid(char* out, size_t n) {
-    uint32_t r0 = esp_random(), r1 = esp_random(), r2 = esp_random(), r3 = esp_random();
-    snprintf(out, n, "%08lx-%04lx-%04lx-%04lx-%04lx%08lx",
-             (unsigned long)r0,
-             (unsigned long)((r1 >> 16) & 0xFFFF), (unsigned long)(r1 & 0xFFFF),
-             (unsigned long)((r2 >> 16) & 0xFFFF), (unsigned long)(r2 & 0xFFFF),
-             (unsigned long)r3);
-}
+static bool publishBirthIfReady(const MeasureFrame* lastFrames,
+                                const bool* hasLast) {
+    if (!g_mqttReady || !g_needBirth || g_birthDone) return false;
 
-// Timestamp ISO-8601 (UTC). Sin NTP sera 1970; se corrige en el paso de NTP.
-static void iso_now(char* out, size_t n) {
-    time_t t = time(nullptr);
-    struct tm tmv;
-    gmtime_r(&t, &tmv);
-    strftime(out, n, "%Y-%m-%dT%H:%M:%S.000Z", &tmv);
-}
-
-// Publica el frame en <base>/data con el formato del evento "up" de ChirpStack.
-static void publish_frame(const MeasureFrame& frame) {
-    char nowIso[32];
-    iso_now(nowIso, sizeof(nowIso));
-
-    char uuid[40];
-    gen_uuid(uuid, sizeof(uuid));
-
-    JsonDocument doc;
-
-    doc["deduplicationId"] = uuid;
-    doc["time"] = nowIso;
-
-    JsonObject di = doc["deviceInfo"].to<JsonObject>();
-    di["tenantId"]           = "7ed4dd52-7046-400b-9b1d-b8449700ddeb";
-    di["tenantName"]         = "Monitor";
-    di["applicationId"]      = "4fee0c86-284b-4279-b490-0fca8a301fb8";
-    di["applicationName"]    = "test";
-    di["deviceProfileId"]    = "4e52970c-5a70-4a03-b434-b78f4ee93bf0";
-    di["deviceProfileName"]  = "POTENCIA US915";
-    di["deviceName"]         = "Test";
-    di["devEui"]             = "1234567890123456";
-    di["deviceClassEnabled"] = "CLASS_A";
-    di["tags"].to<JsonObject>();
-
-    doc["devAddr"]   = "26013a9f";
-    doc["adr"]       = false;
-    doc["dr"]        = 3;
-    doc["fCnt"]      = frame.id;
-    doc["fPort"]     = 1;
-    doc["confirmed"] = false;
-    doc["data"]      = "";
-
-    JsonObject obj = doc["object"].to<JsonObject>();
-    obj["relative_timestamp"] = frame.ts;
-
-    JsonObject meas = obj["measurements"].to<JsonObject>();
-    JsonArray  act  = obj["active_sensors"].to<JsonArray>();
-
-    for (uint8_t i = 0; i < frame.count; ++i) {
-        const SensorValues& sv = frame.sensors[i];
-        const char* name = (sv.sensorId < 8) ? SENSOR_NAMES[sv.sensorId] : "unknown";
-        act.add(name);
-
-        JsonObject chans = meas[name].to<JsonObject>();
-        for (uint8_t c = 0; c < sv.channels; ++c) {
-            char key[4];
-            snprintf(key, sizeof(key), "ch%u", (unsigned)(c + 1));
-            JsonArray arr = chans[key].to<JsonArray>();
-            JsonObject e = arr.add<JsonObject>();
-            e["value"] = sv.value[c];
-            e["time"]  = nowIso;
+    // Suscribir NCMD antes del NBIRTH. No publicar birth hasta tener SUBACK.
+    if (!g_ncmdSubscribed) {
+        if (g_subscribeSentAt == 0 || (millis() - g_subscribeSentAt) >= 2000) {
+            g_subscribeSentAt = millis();
+            mqttClient.subscribe(spb::ncmdTopic(), 1);
+            LOG_I("Sparkplug: suscribiendo NCMD...");
         }
+        return false;
     }
 
-    obj["arrival_date"] = nowIso;
-    obj["id"] = frame.id;
-
-    JsonArray rx = doc["rxInfo"].to<JsonArray>();
-    JsonObject rx0 = rx.add<JsonObject>();
-    rx0["gatewayId"] = "a84041fdfe2764b6";
-    rx0["uplinkId"]  = (uint32_t)esp_random();
-    rx0["gwTime"]    = nowIso;
-    rx0["nsTime"]    = nowIso;
-    rx0["rssi"]      = -12;
-    rx0["snr"]       = 13.8;
-    rx0["channel"]   = 4;
-    rx0["rfChain"]   = 1;
-    JsonObject loc = rx0["location"].to<JsonObject>();
-    loc["latitude"]  = 4.6;
-    loc["longitude"] = 3.2;
-    loc["altitude"]  = 4.199999809265137;
-    rx0["context"]   = "ARg8Xw==";
-    rx0["crcStatus"] = "CRC_OK";
-
-    JsonObject tx = doc["txInfo"].to<JsonObject>();
-    tx["frequency"] = 914300000;
-    JsonObject mod = tx["modulation"].to<JsonObject>();
-    JsonObject lora = mod["lora"].to<JsonObject>();
-    lora["bandwidth"]       = 125000;
-    lora["spreadingFactor"] = 7;
-    lora["codeRate"]        = "CR_4_5";
-
-    doc["regionConfigId"] = "us915_7";
-
-    static char buf[4096];
-    size_t n = serializeJson(doc, buf, sizeof(buf));
-    if (n > 0 && n < sizeof(buf)) {
-        mqttClient.publish(g_dataTopic, 0, false, buf, n);
-        LOG_I("MQTT: data publicado (%zu bytes)", n);
-    } else {
-        LOG_W("MQTT: JSON no cabe (%zu bytes)", n);
+    // Sparkplug exige timestamps UTC en todos los birth/data. No publicar sin NTP.
+    if (!spb::timeReady()) {
+        static uint32_t lastLog = 0;
+        if (lastLog == 0 || (millis() - lastLog) > 10000) {
+            lastLog = millis();
+            LOG_W("Sparkplug: esperando NTP para publicar birth...");
+        }
+        return false;
     }
+
+    spb::NodeHealth health = makeHealth(g_lastCycleOk);
+
+    if (spb::publishBirth(mqttClient, health, lastFrames, hasLast)) {
+        g_birthDone = true;
+        g_needBirth = false;
+        LOG_I("Sparkplug: NBIRTH + DBIRTH publicados");
+        return true;
+    }
+
+    LOG_W("Sparkplug: fallo al publicar birth; se reintenta");
+    return false;
 }
 
 void tareaRed(void *pvParameters) {
-    MeasureFrame frame;
+    (void)pvParameters;
+
+    MeasureFrame lastFrames[kMaxDevices] = {};
+    bool         hasLast[kMaxDevices]    = {};
+    bool         deviceOnline[kMaxDevices] = {};
+
     bool     prevWifi = false;
     bool     prevMqtt = false;
     uint32_t wifiDiscSince = 0;
@@ -339,7 +305,7 @@ void tareaRed(void *pvParameters) {
         // --- WiFi: transiciones + reconexion suave ---
         if (wifi && !prevWifi) {
             LOG_I("WiFi: IP %s (RSSI %d dBm)",
-                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+                  WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
         } else if (!wifi && prevWifi) {
             LOG_W("WiFi: desconectado, reason=%u", (unsigned)g_wifiReason);
         }
@@ -362,6 +328,7 @@ void tareaRed(void *pvParameters) {
         // --- MQTT: transiciones + reconexion con backoff ---
         if (mqtt && !prevMqtt) {
             LOG_I("MQTT: conectado a %s:%u", MQTT_HOST, (unsigned)MQTT_PORT);
+            g_subscribeSentAt = 0;
         } else if (!mqtt && prevMqtt) {
             LOG_W("MQTT: desconectado, se reintentara.");
         }
@@ -372,8 +339,14 @@ void tareaRed(void *pvParameters) {
                 mqttDiscSince = millis();
             } else if (millis() - mqttDiscSince >= mqttBackoff) {
                 LOG_I("MQTT: conectando a %s:%u...", MQTT_HOST, (unsigned)MQTT_PORT);
+
                 g_mqttConnecting = true;
+                spb::prepareDeath();
+                mqttClient.setWill(spb::deathTopic(), 1, false,
+                                   reinterpret_cast<const char*>(spb::deathPayload()),
+                                   spb::deathPayloadLen());
                 mqttClient.connect();
+
                 mqttDiscSince = millis();
                 mqttBackoff = (mqttBackoff * 2 > 30000) ? 30000 : mqttBackoff * 2;
             }
@@ -382,12 +355,56 @@ void tareaRed(void *pvParameters) {
             mqttBackoff = 2000;
         }
 
-        // --- Drenar la cola de datos: publicar JSON si hay MQTT ---
+        // --- Birth / Rebirth ---
+        if (!mqtt) {
+            g_birthDone = false;
+            g_needBirth = false;
+            g_ncmdSubscribed = false;
+        } else {
+            if (g_birthDone && spb::rebirthPending()) {
+                spb::clearRebirth();
+                g_birthDone = false;
+                g_needBirth = true;
+                LOG_I("Sparkplug: rebirth solicitado");
+            }
+
+            if (publishBirthIfReady(lastFrames, hasLast)) {
+                for (uint8_t d = 0; d < kDeviceCount; ++d) deviceOnline[d] = true;
+            }
+        }
+
+        // --- Drenar cola ---
+        MeasureFrame frame;
         if (xQueueReceive(queueMqtt, &frame, pdMS_TO_TICKS(100)) == pdTRUE) {
-            if (mqtt) {
-                publish_frame(frame);
-            } else {
-                LOG_D("Net: frame id=%u descartado (MQTT no conectado)", frame.id);
+            if (frame.deviceIndex < kMaxDevices) {
+                lastFrames[frame.deviceIndex] = frame;
+                hasLast[frame.deviceIndex] = true;
+            }
+
+            if (frame.cycleEnd) g_lastCycleOk = frame.cycleOk;
+
+            if (mqtt && g_birthDone && frame.deviceIndex < kDeviceCount) {
+                const uint8_t d = frame.deviceIndex;
+                const bool recovered = (frame.failStreak == 0);
+
+                if (deviceOnline[d] && frame.failStreak >= SPB_DEVICE_DEATH_CYCLES) {
+                    spb::publishDeviceDeath(mqttClient, d, frame.tsMs);
+                    deviceOnline[d] = false;
+                    LOG_W("Sparkplug: %s DDEATH (sin respuesta)", kDevices[d].deviceId);
+                } else if (!deviceOnline[d] && recovered) {
+                    if (spb::publishDeviceBirth(mqttClient, d, &frame)) {
+                        deviceOnline[d] = true;
+                        LOG_I("Sparkplug: %s DBIRTH (recuperado)", kDevices[d].deviceId);
+                    }
+                }
+
+                if (deviceOnline[d]) {
+                    const bool scanOk = frame.cycleEnd ? frame.cycleOk : true;
+                    spb::publishData(mqttClient, frame, makeHealth(scanOk));
+                } else if (frame.cycleEnd) {
+                    // El ultimo Device del ciclo esta offline; aun asi publicar NDATA.
+                    spb::publishNodeData(mqttClient, makeHealth(frame.cycleOk), frame.tsMs);
+                }
             }
         }
     }
@@ -403,7 +420,7 @@ void setup() {
         const uint32_t t0 = millis();
         while (!Serial && (millis() - t0) < 3000) { delay(10); }
     }
-    Serial.println("Iniciando modbus_master_mqtt (variante MQTT)...");
+    Serial.println("Iniciando modbus_master_mqtt (Sparkplug B)...");
 
     SPI.begin();
 
@@ -411,11 +428,16 @@ void setup() {
                     kBusCfg.baudRate, kBusCfg.uartConfig,
                     kBusCfg.defaultTimeoutMs);
 
-    queueMqtt = xQueueCreate(3, sizeof(MeasureFrame));
+    queueMqtt = xQueueCreate(2 * kMaxDevices, sizeof(MeasureFrame));
 
-    // WiFi (Paso 2)
+    spb::begin(kSpbCfg);
+
+    snprintf(g_clientId, sizeof(g_clientId), "%s-%06llx", MQTT_CLIENT,
+             (unsigned long long)(ESP.getEfuseMac() & 0xFFFFFFULL));
+    LOG_I("MQTT: client id '%s'", g_clientId);
+
     WiFi.mode(WIFI_STA);
-    WiFi.setHostname(MQTT_CLIENT);
+    WiFi.setHostname(g_clientId);
     WiFi.persistent(false);
     WiFi.setAutoReconnect(true);
     WiFi.onEvent(wifi_event, ARDUINO_EVENT_WIFI_STA_GOT_IP);
@@ -423,15 +445,15 @@ void setup() {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     LOG_I("WiFi: conectando a '%s'...", WIFI_SSID);
 
-    // MQTT (Paso 3)
     mqtt_setup();
-    LOG_I("MQTT: broker %s:%u, up topic '%s'", MQTT_HOST, (unsigned)MQTT_PORT, g_dataTopic);
+    LOG_I("MQTT: broker %s:%u, grupo Sparkplug '%s', nodo '%s'",
+          MQTT_HOST, (unsigned)MQTT_PORT, SPB_GROUP_ID, SPB_EDGE_NODE);
 
     xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 8192, NULL, 3, &g_pollTaskHandle, 0);
-    xTaskCreatePinnedToCore(tareaRed, "NetTask", 8192, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(tareaRed, "NetTask", 12288, NULL, 5, NULL, 1);
 
-    Serial.printf("Configurado: bus a %lu baud, %zu bloques, intervalo %lu ms\n",
-                  kBusCfg.baudRate, kBlockCount, (unsigned long)g_pollIntervalMs);
+    Serial.printf("Configurado: bus %lu baud, %u devices, intervalo %lu ms\n",
+                  kBusCfg.baudRate, (unsigned)kDeviceCount, (unsigned long)g_pollIntervalMs);
 }
 
 void loop() {

@@ -1,5 +1,10 @@
 # Tutorial: como funciona y como se extiende el Modbus de `modbus_master_mqtt`
 
+> **Actualizado para Sparkplug B:** las definiciones por dispositivo ahora estan en
+> `include/DevicesConfig.h` (`kMeterBlocks`, `kMeterSignals`, `kMeterMetrics`, `kDevices`).
+> La publicacion ya no es JSON: el firmware publica Sparkplug B Device-level. `tareaMqtt`
+> paso a llamarse `tareaRed`. Para probar, ver `GUIA_SPARKPLUG.md`.
+
 Guia practica de la variante MQTT del master Modbus. Explica la arquitectura, como
 agregar lecturas (bloques y senales), como escribir funciones de decodificacion y como
 llega la data a la tarea MQTT.
