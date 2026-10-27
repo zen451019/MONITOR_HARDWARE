@@ -8,7 +8,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <WiFi.h>
-#include <AsyncMqttClient.h>
+#include "MqttTransport.h"
 
 #include <cstdint>
 #include <cstring>
@@ -37,7 +37,7 @@ QueueHandle_t queueMqtt;
 volatile bool g_wifiReady = false;
 volatile uint8_t g_wifiReason = 0;
 
-AsyncMqttClient mqttClient;
+MqttTransport mqttClient;
 volatile bool g_mqttReady = false;
 volatile bool g_mqttConnecting = false;
 volatile bool g_needBirth = false;
@@ -53,7 +53,7 @@ static const spb::Config kSpbCfg = {
     SPB_NTP2,
 };
 
-// NCMD puede llegar fragmentado; se acumula en el callback (tarea AsyncTCP).
+// NCMD puede llegar fragmentado; se acumula en el callback (tarea MQTT).
 static uint8_t g_ncmdBuf[512];
 static size_t  g_ncmdExpected = 0;
 
@@ -195,8 +195,7 @@ static void mqtt_onConnect(bool sessionPresent) {
     g_birthDone      = false;
 }
 
-static void mqtt_onDisconnect(AsyncMqttClientDisconnectReason reason) {
-    (void)reason;
+static void mqtt_onDisconnect() {
     g_mqttConnecting = false;
     g_mqttReady      = false;
     g_needBirth      = false;
@@ -210,11 +209,8 @@ static void mqtt_onSubscribe(uint16_t packetId, uint8_t qos) {
     g_ncmdSubscribed = true;
 }
 
-static void mqtt_onMessage(char* topic, char* payload,
-                           AsyncMqttClientMessageProperties properties,
+static void mqtt_onMessage(const char* topic, const char* payload,
                            size_t len, size_t index, size_t total) {
-    (void)properties;
-
     if (strcmp(topic, spb::ncmdTopic()) != 0) return;
 
     if (index == 0) g_ncmdExpected = total;
@@ -223,8 +219,11 @@ static void mqtt_onMessage(char* topic, char* payload,
         return;
     }
     if (index + len > sizeof(g_ncmdBuf)) return;
+    if (payload == nullptr && len > 0) return;
 
-    memcpy(g_ncmdBuf + index, payload, len);
+    if (len > 0) {
+        memcpy(g_ncmdBuf + index, payload, len);
+    }
 
     if (index + len == total) {
         spb::handleCommand(g_ncmdBuf, total);
@@ -233,19 +232,15 @@ static void mqtt_onMessage(char* topic, char* payload,
 }
 
 static void mqtt_setup() {
-    mqttClient.setClientId(g_clientId);
-    mqttClient.setKeepAlive(15);
-    mqttClient.setCleanSession(true);
-
-    if (MQTT_USER[0] != '\0') {
-        mqttClient.setCredentials(MQTT_USER, MQTT_PASS);
-    }
-
-    mqttClient.setServer(MQTT_HOST, MQTT_PORT);
     mqttClient.onConnect(mqtt_onConnect);
     mqttClient.onDisconnect(mqtt_onDisconnect);
     mqttClient.onSubscribe(mqtt_onSubscribe);
     mqttClient.onMessage(mqtt_onMessage);
+
+    if (!mqttClient.begin(MQTT_HOST, MQTT_PORT, g_clientId,
+                          MQTT_USER, MQTT_PASS)) {
+        LOG_E("MQTT: no se pudo inicializar el transporte");
+    }
 }
 
 static bool publishBirthIfReady(const MeasureFrame* lastFrames,
@@ -345,7 +340,11 @@ void tareaRed(void *pvParameters) {
                 mqttClient.setWill(spb::deathTopic(), 1, false,
                                    reinterpret_cast<const char*>(spb::deathPayload()),
                                    spb::deathPayloadLen());
-                mqttClient.connect();
+
+                if (!mqttClient.connect()) {
+                    g_mqttConnecting = false;
+                    LOG_W("MQTT: fallo al iniciar conexion");
+                }
 
                 mqttDiscSince = millis();
                 mqttBackoff = (mqttBackoff * 2 > 30000) ? 30000 : mqttBackoff * 2;

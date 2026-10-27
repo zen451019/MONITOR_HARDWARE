@@ -2,7 +2,7 @@
 #include "SparkplugConfig.h"
 #include "Log.h"
 
-#include <AsyncMqttClient.h>
+#include "MqttTransport.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <sys/time.h>
@@ -137,7 +137,7 @@ size_t encodeToBuffer(uint8_t* buf, size_t cap, const Payload& payload) {
     return stream.bytes_written;
 }
 
-bool publishPayload(AsyncMqttClient& mqtt, const char* topic, uint8_t qos,
+bool publishPayload(MqttTransport& mqtt, const char* topic, uint8_t qos,
                     const Payload& payload, const char* what) {
     const size_t len = encodeToBuffer(g_txBuf, sizeof(g_txBuf), payload);
     if (len == 0) return false;
@@ -260,7 +260,7 @@ void fillDeviceMetrics(Payload& p, const DeviceConfig& dev,
     }
 }
 
-bool publishDeviceBirthInternal(AsyncMqttClient& mqtt, uint8_t deviceIndex,
+bool publishDeviceBirthInternal(MqttTransport& mqtt, uint8_t deviceIndex,
                                 const MeasureFrame* frame) {
     if (deviceIndex >= kDeviceCount) return false;
 
@@ -284,7 +284,7 @@ bool publishDeviceBirthInternal(AsyncMqttClient& mqtt, uint8_t deviceIndex,
     return true;
 }
 
-bool publishNodeDataInternal(AsyncMqttClient& mqtt, const spb::NodeHealth& health,
+bool publishNodeDataInternal(MqttTransport& mqtt, const spb::NodeHealth& health,
                              uint64_t ts) {
     if (ts == 0) return false;
 
@@ -413,7 +413,7 @@ size_t deathPayloadLen() {
     return g_deathLen;
 }
 
-bool publishBirth(AsyncMqttClient& mqtt, const NodeHealth& health,
+bool publishBirth(MqttTransport& mqtt, const NodeHealth& health,
                   const MeasureFrame* lastFrames, const bool* hasLast) {
     g_seq = 0;
     const uint64_t ts = nowMs();
@@ -447,12 +447,12 @@ bool publishBirth(AsyncMqttClient& mqtt, const NodeHealth& health,
     return true;
 }
 
-bool publishDeviceBirth(AsyncMqttClient& mqtt, uint8_t deviceIndex,
+bool publishDeviceBirth(MqttTransport& mqtt, uint8_t deviceIndex,
                         const MeasureFrame* frame) {
     return publishDeviceBirthInternal(mqtt, deviceIndex, frame);
 }
 
-bool publishData(AsyncMqttClient& mqtt, const MeasureFrame& frame,
+bool publishData(MqttTransport& mqtt, const MeasureFrame& frame,
                  const NodeHealth& health) {
     if (frame.deviceIndex >= kDeviceCount) return false;
 
@@ -480,12 +480,12 @@ bool publishData(AsyncMqttClient& mqtt, const MeasureFrame& frame,
     return ok;
 }
 
-bool publishNodeData(AsyncMqttClient& mqtt, const NodeHealth& health, uint64_t tsMs) {
+bool publishNodeData(MqttTransport& mqtt, const NodeHealth& health, uint64_t tsMs) {
     const uint64_t ts = (tsMs != 0) ? tsMs : nowMs();
     return publishNodeDataInternal(mqtt, health, ts);
 }
 
-bool publishDeviceDeath(AsyncMqttClient& mqtt, uint8_t deviceIndex, uint64_t tsMs) {
+bool publishDeviceDeath(MqttTransport& mqtt, uint8_t deviceIndex, uint64_t tsMs) {
     if (deviceIndex >= kDeviceCount) return false;
 
     const uint64_t ts = (tsMs != 0) ? tsMs : nowMs();

@@ -7,7 +7,7 @@
 #include "MeasureFrame.h"
 #include "DevicesConfig.h"
 
-class AsyncMqttClient;
+class MqttTransport;
 
 namespace spb {
 
@@ -37,28 +37,28 @@ const uint8_t* deathPayload();
 size_t      deathPayloadLen();
 
 // Llamar tras CONNACK.
-bool publishBirth(AsyncMqttClient& mqtt,
+bool publishBirth(MqttTransport& mqtt,
                   const NodeHealth& health,
                   const MeasureFrame* lastFrames,
                   const bool* hasLast);
 
 // DBIRTH individual (recuperacion de un Device).
-bool publishDeviceBirth(AsyncMqttClient& mqtt,
+bool publishDeviceBirth(MqttTransport& mqtt,
                         uint8_t deviceIndex,
                         const MeasureFrame* frame);
 
 // DDATA; si frame.cycleEnd tambien publica NDATA con la salud del nodo.
-bool publishData(AsyncMqttClient& mqtt,
+bool publishData(MqttTransport& mqtt,
                  const MeasureFrame& frame,
                  const NodeHealth& health);
 
 // NDATA independiente (por si el ultimo Device del ciclo esta offline).
-bool publishNodeData(AsyncMqttClient& mqtt,
+bool publishNodeData(MqttTransport& mqtt,
                      const NodeHealth& health,
                      uint64_t tsMs);
 
 // DDEATH individual.
-bool publishDeviceDeath(AsyncMqttClient& mqtt,
+bool publishDeviceDeath(MqttTransport& mqtt,
                         uint8_t deviceIndex,
                         uint64_t tsMs);
 
