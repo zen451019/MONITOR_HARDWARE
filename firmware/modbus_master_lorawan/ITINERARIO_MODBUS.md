@@ -5,8 +5,9 @@ Arquitectura **table-driven**: una tabla estática de lecturas y una sola tarea 
 
 - **Dispositivo**: medidor trifásico **`DEV_TRIFASICO_NUEVO`** (slave **1**, `u16`/`int32` little-endian por registro, ver `manual_modbus_rtu_clean.txt`).
 - Reprogramable tal cual: es un proyecto PlatformIO completo e independiente.
-- **Stack LoRaWAN**: **RadioLib** (migrado desde MCCI LMIC). Activación **OTAA**, **Class A**.
-  Rejoin en cada arranque; solo se persisten los **nonces** en NVS (`Preferences`).
+- **Stack LoRaWAN**: **RadioLib** (migrado desde MCCI LMIC). Activación **ABP**, **Class A**.
+  Sesión fija, sin join ni persistencia; el `FCnt` arranca en 0 en cada reinicio (igual que el
+  legado LMIC). El servidor debe aceptar el reset de contador para ABP.
 
 ---
 
@@ -118,9 +119,10 @@ Definido en `src/main.cpp`: `SX1276 radio = new Module(18, 26, 23, 33);`.
 
 ### Subbanda US915
 
-`LoRaWANNode node(&radio, &US915, LORAWAN_SUB_BAND);` con `LORAWAN_SUB_BAND = 2`.
-RadioLib indexa las subbandas **desde 1**: subbanda **2** = **FSB 2** (canales 8-15),
-que es la que tiene configurada el gateway. Debe coincidir con el `FSB` del gateway.
+`LoRaWANNode node(&radio, &US915, LORAWAN_SUB_BAND);` con `LORAWAN_SUB_BAND = 8`.
+RadioLib indexa las subbandas **desde 1**: subbanda **8** = canales **56-63** (más el canal
+de 500 kHz), equivalente a `LMIC_selectSubBand(7)` del legado. Debe coincidir con la
+configuración del gateway.
 
 ## 7. Requisito local NO versionado: `include/loraconfig.h`
 
@@ -128,16 +130,17 @@ que es la que tiene configurada el gateway. Debe coincidir con el `FSB` del gate
 **No se incluye en los snapshots de git**, así que hay que colocarlo manualmente para poder
 compilar (error típico: `fatal error: loraconfig.h: No such file or directory`).
 
-Ahora usa **OTAA** (placeholders `0x00...` por defecto):
+Ahora usa **ABP** (credenciales del legado `TTGO_MASTER_LORA`):
 
 | Símbolo | Bytes | Descripción |
 |---|---|---|
-| `DEVEUI[8]` | 8 | Device EUI (MSB primero) |
-| `JOINEUI[8]` | 8 | Join/App EUI (todo ceros es válido en desarrollo) |
-| `APPKEY[16]` | 16 | Application root key |
-| `NWKKEY[16]` | 16 | Network root key (LoRaWAN 1.0.x: igual a `APPKEY`) |
+| `DEVADDR` | 4 | Device address (`0x260C691F`) |
+| `NWKSKEY[16]` | 16 | Network session key (LoRaWAN 1.0.x NwkSKey) |
+| `APPSKEY[16]` | 16 | Application session key (LoRaWAN 1.0.x AppSKey) |
 
-El helper `lorawan_eui_to_uint64()` empaqueta los EUI big-endian al `uint64_t` de RadioLib.
+Las claves OTAA (`DEVEUI`, `JOINEUI`, `APPKEY`, `NWKKEY`) se mantienen en el archivo pero ya
+no se usan. El dispositivo debe estar dado de alta como **ABP** en el network server con el
+mismo `DevAddr`, `NwkSKey` y `AppSKey`.
 
 ## 8. Diferencias con la versión SDM630
 
@@ -149,7 +152,7 @@ El helper `lorawan_eui_to_uint64()` empaqueta los EUI big-endian al `uint64_t` d
 | Requests | 12 | 11 |
 | Tensión | F-N A/B/C | F-F L1L2/L2L3/L3L1 |
 | Energía | total `0x003A` | total `0x0156` |
-| Stack LoRaWAN | RadioLib (OTAA/Class A) | LMIC (o RadioLib tras la migración) |
+| Stack LoRaWAN | RadioLib (ABP/Class A) | LMIC (o RadioLib tras la migración) |
 
 ## 9. Downlink / control (`FPORT_CMD` = 2, Class A)
 
@@ -163,27 +166,49 @@ entrega en `sendReceive()` y `handleDownlink()` lo procesa:
 | `0x03` SET_TX_POWER | `[1]` int8 (dBm) | `node.setTxPower()` |
 | `0x04` SET_DATARATE | `[1]` uint8 DR | `node.setDatarate()` (ADR debe estar off) |
 | `0x05` REBOOT | — | `ESP.restart()` |
-| `0x06` REJOIN | — | `node.clearSession()` + join |
+| `0x06` REJOIN | — | No aplica en ABP (ignorado) |
 | `0x07` SET_ADR | `[1]` 0/1 | `node.setADR()` |
 
 Uplinks en `FPORT_DATA` = 1.
 
-### Persistencia y rejoin (estrategia)
+### Activación ABP (estrategia)
 
-- **Se re-une en cada arranque** (OTAA). No se persiste la sesión: así el `FCnt` arranca en 0
-  y el servidor acepta la sesión nueva, sin huecos de contador ni desgaste de NVS.
-- Solo se persiste el **DevNonce/JoinNonce** (`saveNonces()` / `loadNonces()`), para que el
-  Join Server no rechace el join por `reuse_dev_nonce`. `loadNonces()` se llama **después** de
-  `beginOTAA()` (que limpia el buffer y fija el checksum).
-- **Auto-rejoin**: si fallan `REJOIN_FAIL_THRESHOLD` (3) uplinks seguidos con error de radio,
-  se hace `clearSession()` + join. También de forma manual con el comando `0x06`.
-- **Reintentos de join en el arranque**: `joinNetwork()` intenta hasta `JOIN_MAX_ATTEMPTS`
-  (5) con `JOIN_RETRY_DELAY_MS` (5 s). Si el DevNonce guardado va por detrás de la marca del
-  servidor (`reuse_dev_nonce`), cada intento lo incrementa y se autocorrige en segundos.
-  Loguea el **DevNonce** restaurado y el de cada intento (`readDevNonce()`).
-- `joinNetwork()` aplica `setADR(false)`/`setDatarate(3)`/`setTxPower(20)` **después** de
-  activar (durante el join, `selectChannels()` deja el DR en 0 y provocaría `PACKET_TOO_LONG`).
+- **No hay join.** `beginABP(DEVADDR, NULL, NULL, NWKSKEY, APPSKEY)` fija la sesión y
+  `activateABP()` la deja lista; el primer uplink sale de inmediato.
+- No se persiste la sesión ni los nonces. El `FCnt` arranca en 0 en cada reinicio, igual que
+  el legado LMIC; el network server debe aceptar el reset de contador para ABP.
+- **Sin auto-rejoin** ni comando manual `0x06`: si `sendReceive()` falla, solo se registra el
+  error.
+- Tras activar se aplican `setADR(false)`, `setDatarate(3)` (SF7/125 kHz) y `setTxPower(20)`,
+  los mismos parámetros del legado.
 
 > En Class A el downlink solo puede llegar tras un uplink. Para control en cualquier
 > momento habría que pasar a Class C (`node.setClass(RADIOLIB_LORAWAN_CLASS_C)` +
 > `getDownlinkClassC()`).
+
+## 10. Modo simulación (demo)
+
+Entorno independiente que **no realiza lecturas Modbus reales** y transmite datos
+simulados por LoRaWAN con el mismo formato de payload:
+
+```
+pio run -e ttgo-lora32-v21-sim -t upload
+```
+
+- Definido en `platformio.ini` con `-DSIMULATION_MODE=1` y
+  `-DSIM_POLL_INTERVAL_MS=10000` (ciclo cada 10 s para la demo).
+- Producción (`env:ttgo-lora32-v21`) sigue leyendo el bus RS485 real sin cambios.
+- El modelo (`include/SensorSimulator.h`, `src/SensorSimulator.cpp`) usa
+  **127 V fase-neutro / 60 Hz**, con V/I/PF/frecuencia/energía coherentes:
+  - `P = Σ V·I·PF`, `S = Σ V·I`, `Q = Σ V·I·√(1−PF²)`.
+  - `energía += P·Δt / 3.6e6` (kWh).
+- Cada 8–15 ciclos inyecta una anomalía automática de 1–3 ciclos: sag, swell,
+  sobrecorriente, caída de PF, deriva de frecuencia o sobrecarga. Los umbrales
+  están en `include/SimulationConfig.h` (V 115–140, I > 20 A, F 59.5–60.5,
+  PF < 0.85).
+- El encoder del simulador replica el medidor real (u16 low-byte-first e int32
+  low-word-first), así que `swapWords`, `swapWordOrder` y `codec.js` no cambian.
+- El timestamp del payload se mantiene igual que en producción (no hay NTP); el
+  backend puede seguir usando `arrival_date` del gateway.
+- `codec.js` ya extrae el PF combinado del byte bajo de `0x0027` y lo escala a
+  0.00–1.00.

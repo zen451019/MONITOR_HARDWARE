@@ -10,7 +10,6 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <RadioLib.h>
-#include <Preferences.h>
 #include <vector>
 #include <cstdint>
 #include <map>
@@ -23,6 +22,7 @@
 #include "ModbusConfig.h"
 #include "loraconfig.h"
 #include "SensorRegistry.h"
+#include "SensorSimulator.h"
 #include "Log.h"
 
 // =================================================================================================
@@ -44,25 +44,16 @@ struct SensorDataPayload {
 // =================================================================================================
 
 // RadioLib sub-band numbering starts at 1.
-// This device is configured for US915 FSB 2 (channels 8-15) => sub-band 2.
-static const uint8_t LORAWAN_SUB_BAND = 2;
+// Legacy LMIC used sub-band 7 (channels 56-63); its RadioLib equivalent is sub-band 8.
+static const uint8_t LORAWAN_SUB_BAND = 8;
 
 // Application ports.
 static const uint8_t FPORT_DATA = 1;   // uplink: sensor payload
 static const uint8_t FPORT_CMD  = 2;   // downlink: control commands
 
-// Auto-rejoin: number of consecutive uplink errors before clearing the session and rejoining.
-static const uint8_t REJOIN_FAIL_THRESHOLD = 3;
-
-// Join retries at boot: if the stored DevNonce is behind the server's high-water mark,
-// each attempt advances it, so a few retries self-heal without waiting for the auto-rejoin.
-static const uint8_t  JOIN_MAX_ATTEMPTS   = 5;
-static const uint32_t JOIN_RETRY_DELAY_MS = 5000;
-
 // TTGO LoRa32 v2.1 pinout: NSS=18, DIO0=26, RST=23, DIO1=33.
 static SX1276 radio = new Module(18, 26, 23, 33);
 static LoRaWANNode node(&radio, &US915, LORAWAN_SUB_BAND);
-static Preferences prefs;
 
 // =================================================================================================
 // Runtime-mutable state (control via downlink)
@@ -71,16 +62,16 @@ static Preferences prefs;
 volatile uint32_t g_pollIntervalMs = POLL_INTERVAL_MS;
 static TaskHandle_t g_pollTaskHandle = NULL;
 
+#if SIMULATION_MODE
+static uint32_t g_simLastCycleMs = 0;
+#endif
+
 // =================================================================================================
 // Forward Declarations
 // =================================================================================================
 std::vector<uint8_t> construirPayloadUnificado(uint8_t id_mensaje,
     const std::vector<SensorDataPayload>& collectedPayloads);
 static void flushUartRx(HardwareSerial& s);
-static void saveNonces();
-static void loadNonces();
-static bool joinNetwork();
-static void forceRejoin();
 static void handleDownlink(const uint8_t* data, size_t len, const LoRaWANEvent_t& ev);
 
 // =================================================================================================
@@ -200,18 +191,37 @@ void mainPollingTask(void *pvParameters) {
 
         LOG_I("--- Ciclo de consulta (msgId=%u) ---", msgId);
 
+#if SIMULATION_MODE
+        {
+            const uint32_t nowMs = millis();
+            const uint32_t dtMs  = (g_simLastCycleMs == 0)
+                                       ? g_pollIntervalMs
+                                       : (nowMs - g_simLastCycleMs);
+            g_simLastCycleMs = nowMs;
+            sim_begin_cycle(dtMs);
+        }
+#endif
+
         for (size_t i = 0; i < kRequestCount; ++i) {
             const auto& req = kRequests[i];
             uint8_t  fnCode    = lookupFunctionCode(req.slaveID);
             uint32_t timeout   = lookupTimeout(req.slaveID);
             bool     swapWords = lookupSwapWords(req.slaveID);
+#if SIMULATION_MODE
+            (void)timeout;
+#endif
 
             LOG_D("Solicitando Slave=%u, Addr=0x%04X, Regs=%u, FC=0x%02X",
                   req.slaveID, req.startAddr, req.numRegs, fnCode);
 
+#if SIMULATION_MODE
+            ModbusApiResult result = sim_read_registers(
+                req.slaveID, fnCode, req.startAddr, req.numRegs);
+#else
             flushUartRx(Serial2);
             ModbusApiResult result = modbus_api_read_registers(
                 req.slaveID, fnCode, req.startAddr, req.numRegs, timeout);
+#endif
 
             if (result.error_code == ModbusApiError::SUCCESS) {
                 // Extract register bytes respecting endianness
@@ -307,88 +317,11 @@ void mainPollingTask(void *pvParameters) {
 }
 
 // =================================================================================================
-// LoRaWAN (RadioLib) — nonces persistence + join helpers
+// LoRaWAN (RadioLib) — ABP activation
 // =================================================================================================
-// Strategy: rejoin on every boot. We do NOT persist the session (that avoids frame-counter
-// gaps after a reboot and avoids NVS wear); we only persist the DevNonce/JoinNonce so the
-// network server does not reject a repeated DevNonce ("reuse_dev_nonce").
-
-// Persist only the nonces buffer (DevNonce/JoinNonce). Must be called after every join
-// attempt, even a failed one, so the DevNonce keeps advancing across reboots.
-static void saveNonces() {
-    prefs.begin("lorawan", false);
-    prefs.putBytes("nonces", node.getBufferNonces(), RADIOLIB_LORAWAN_NONCES_BUF_SIZE);
-    prefs.end();
-}
-
-// Read the current DevNonce from the (public) nonces buffer (stored little-endian).
-static uint16_t readDevNonce() {
-    const uint8_t* b = node.getBufferNonces() + RADIOLIB_LORAWAN_NONCES_DEV_NONCE;
-    return (uint16_t)b[0] | ((uint16_t)b[1] << 8);
-}
-
-// Restore the nonces buffer. MUST be called AFTER beginOTAA(), which clears the buffer
-// and sets the key/mode/plan checksum that setBufferNonces() validates against.
-static void loadNonces() {
-    prefs.begin("lorawan", true);
-    uint8_t noncesBuf[RADIOLIB_LORAWAN_NONCES_BUF_SIZE];
-    if (prefs.isKey("nonces") &&
-        prefs.getBytesLength("nonces") == RADIOLIB_LORAWAN_NONCES_BUF_SIZE &&
-        prefs.getBytes("nonces", noncesBuf, RADIOLIB_LORAWAN_NONCES_BUF_SIZE) == RADIOLIB_LORAWAN_NONCES_BUF_SIZE) {
-        int16_t st = node.setBufferNonces(noncesBuf);
-        if (st == RADIOLIB_ERR_NONE) {
-            LOG_I("LoRaWAN: nonces restaurados desde NVS (DevNonce=%u).", readDevNonce());
-        } else {
-            LOG_W("LoRaWAN: setBufferNonces() = %d (se usará un DevNonce nuevo).", st);
-        }
-    } else {
-        LOG_W("LoRaWAN: no hay nonces en NVS (primer arranque).");
-    }
-    prefs.end();
-}
-
-// Join (or rejoin) the network and apply the uplink settings.
-// Retries a few times: if the stored DevNonce is behind the server's high-water mark, each
-// attempt advances it, so it self-heals quickly instead of waiting for the auto-rejoin.
-static bool joinNetwork() {
-    for (uint8_t attempt = 1; attempt <= JOIN_MAX_ATTEMPTS; ++attempt) {
-        LOG_I("LoRaWAN: intento de join %u/%u (DevNonce=%u).",
-              attempt, JOIN_MAX_ATTEMPTS, readDevNonce());
-
-        int16_t state = node.activateOTAA();
-
-        // Persist the advanced DevNonce even if the join failed.
-        saveNonces();
-
-        if (state == RADIOLIB_LORAWAN_NEW_SESSION ||
-            state == RADIOLIB_LORAWAN_SESSION_RESTORED ||
-            state == RADIOLIB_ERR_NONE) {
-            // Apply the datarate AFTER activation: during the join, RadioLib's selectChannels()
-            // forces the join DR (DR0 on US915) and does not restore it, which would make the
-            // first uplink exceed the payload limit (RADIOLIB_ERR_PACKET_TOO_LONG, -4).
-            node.setADR(false);
-            node.setDatarate(3);       // US915 DR3 = SF7/125 kHz
-            node.setTxPower(20);
-            LOG_I("LoRaWAN: join OK (max payload %u B, DevNonce=%u).",
-                  (unsigned)node.getMaxPayloadLen(), readDevNonce());
-            return true;
-        }
-
-        LOG_E("LoRaWAN: join OTAA falló (%d), intento %u/%u.",
-              state, attempt, JOIN_MAX_ATTEMPTS);
-
-        if (attempt < JOIN_MAX_ATTEMPTS) {
-            vTaskDelay(pdMS_TO_TICKS(JOIN_RETRY_DELAY_MS));
-        }
-    }
-    return false;
-}
-
-static void forceRejoin() {
-    LOG_W("LoRaWAN: forzando rejoin (clearSession + join).");
-    node.clearSession();
-    (void)joinNetwork();
-}
+// Fixed session (ABP), same behavior as the legacy LMIC version: no join, no DevNonce and
+// no session persistence. The frame counter starts at 0 on every boot, so the network
+// server must be configured to accept an ABP frame-counter reset.
 
 // =================================================================================================
 // Downlink command handling (FPort FPORT_CMD)
@@ -399,7 +332,7 @@ static void forceRejoin() {
 //   0x03 SET_TX_POWER      : [1] int8 dBm
 //   0x04 SET_DATARATE      : [1] uint8 data rate (only meaningful with ADR off)
 //   0x05 REBOOT            : restart the MCU
-//   0x06 REJOIN            : clear the session and join again
+//   0x06 REJOIN            : not applicable in ABP (ignored)
 //   0x07 SET_ADR           : [1] 0 = off, 1 = on
 
 static void handleDownlink(const uint8_t* data, size_t len, const LoRaWANEvent_t& ev) {
@@ -441,8 +374,7 @@ static void handleDownlink(const uint8_t* data, size_t len, const LoRaWANEvent_t
             ESP.restart();
             break;
         case 0x06:
-            LOG_I("CMD: rejoin solicitado.");
-            forceRejoin();
+            LOG_W("CMD: rejoin no aplica en modo ABP (ignorado).");
             break;
         case 0x07:
             if (len < 2) { LOG_W("CMD SET_ADR incompleto."); break; }
@@ -461,28 +393,31 @@ void initLoRa() {
         LOG_E("LoRaWAN: radio.begin() falló (%d).", state);
     }
 
-    state = node.beginOTAA(lorawan_eui_to_uint64(JOINEUI),
-                           lorawan_eui_to_uint64(DEVEUI),
-                           NWKKEY, APPKEY);
+    // LoRaWAN 1.0.x ABP: pass NULL for the 1.1 forwarding/serving keys.
+    state = node.beginABP(DEVADDR, nullptr, nullptr, NWKSKEY, APPSKEY);
     if (state != RADIOLIB_ERR_NONE) {
-        LOG_E("LoRaWAN: beginOTAA() falló (%d).", state);
+        LOG_E("LoRaWAN: beginABP() falló (%d).", state);
     }
 
-    // Restore the DevNonce/JoinNonce AFTER beginOTAA(): beginOTAA() clears the nonces
-    // buffer and sets the checksum that setBufferNonces() validates.
-    loadNonces();
+    int16_t act = node.activateABP();
+    if (act == RADIOLIB_LORAWAN_NEW_SESSION ||
+        act == RADIOLIB_LORAWAN_SESSION_RESTORED ||
+        act == RADIOLIB_ERR_NONE) {
+        LOG_I("LoRaWAN: ABP activo (DevAddr=0x%08lX, max payload %u B).",
+              (unsigned long)DEVADDR, (unsigned)node.getMaxPayloadLen());
+    } else {
+        LOG_E("LoRaWAN: activateABP() falló (%d).", act);
+    }
 
-    // Apply the TX power before joining so the JoinRequest also uses it.
+    // Same settings as the legacy LMIC version.
+    node.setADR(false);
+    node.setDatarate(3);       // US915 DR3 = SF7/125 kHz
     node.setTxPower(20);
-
-    // Rejoin on every boot (no session persistence).
-    (void)joinNetwork();
 }
 
 void tareaLoRa(void *pvParameters) {
     Fragmento frag;
     uint8_t downBuf[RADIOLIB_LORAWAN_MAX_PAYLOAD_SIZE];
-    uint8_t consecutiveFailures = 0;
 
     while (true) {
         if (xQueueReceive(queueFragmentos, &frag, portMAX_DELAY) == pdTRUE) {
@@ -506,21 +441,17 @@ void tareaLoRa(void *pvParameters) {
 
             if (state < RADIOLIB_ERR_NONE) {
                 LOG_E("LoRa: sendReceive() error %d", state);
-                if (++consecutiveFailures >= REJOIN_FAIL_THRESHOLD) {
-                    consecutiveFailures = 0;
-                    forceRejoin();
-                }
             } else {
-                consecutiveFailures = 0;
                 if (state > 0) {
-                    LOG_I("LoRa: TX completo (DR=%u, cnt=%lu) + downlink de %u bytes (FPort %u).",
-                          evUp.datarate, (unsigned long)evUp.fCnt, (unsigned)downLen, evDown.fPort);
+                    LOG_I("LoRa: TX completo (DR=%u, freq=%.1f MHz, cnt=%lu) + downlink de %u bytes (FPort %u).",
+                          evUp.datarate, evUp.freq, (unsigned long)evUp.fCnt,
+                          (unsigned)downLen, evDown.fPort);
                     if (downLen > 0) {
                         handleDownlink(downBuf, downLen, evDown);
                     }
                 } else {
-                    LOG_I("LoRa: TX completo (DR=%u, cnt=%lu), sin downlink.",
-                          evUp.datarate, (unsigned long)evUp.fCnt);
+                    LOG_I("LoRa: TX completo (DR=%u, freq=%.1f MHz, cnt=%lu), sin downlink.",
+                          evUp.datarate, evUp.freq, (unsigned long)evUp.fCnt);
                 }
             }
         }
@@ -541,9 +472,15 @@ void setup() {
 
     SPI.begin();
 
+#if SIMULATION_MODE
+    // Simulation build: no physical RS485 traffic, no Modbus master init.
+    sim_init();
+    LOG_I("Modo SIMULACION activo: no se realizan lecturas Modbus reales.");
+#else
     // Modbus init with configurable bus parameters
     modbus_api_init(Serial2, kBusCfg.rxPin, kBusCfg.txPin,
                     kBusCfg.baudRate, kBusCfg.uartConfig);
+#endif
 
     // LoRa queue
     queueFragmentos = xQueueCreate(10, sizeof(Fragmento));
@@ -555,8 +492,13 @@ void setup() {
     // Single main polling task — replaces all scheduler/aggregator complexity
     xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 8192, NULL, 3, &g_pollTaskHandle, 0);
 
+#if SIMULATION_MODE
+    Serial.printf("SIMULACION activa: intervalo %lu ms, %zu requests\n",
+                  (unsigned long)g_pollIntervalMs, kRequestCount);
+#else
     Serial.printf("Configurado: bus a %lu baud, %zu requests, intervalo %lu ms\n",
                   kBusCfg.baudRate, kRequestCount, (unsigned long)g_pollIntervalMs);
+#endif
 }
 
 void loop() {

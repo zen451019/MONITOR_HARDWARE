@@ -101,7 +101,11 @@ constexpr size_t kRequestCount = sizeof(kRequests) / sizeof(kRequests[0]);
 // =================================================================================================
 // Timing
 // =================================================================================================
+#ifdef SIM_POLL_INTERVAL_MS
+constexpr unsigned long POLL_INTERVAL_MS = SIM_POLL_INTERVAL_MS;
+#else
 constexpr unsigned long POLL_INTERVAL_MS = 30000;   // Cada 30 segundos se consulta todo el bus
+#endif
 
 // =================================================================================================
 // Lookup helpers (inline to avoid ODR violations)
