@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-04/P0-05 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-04/P0-05/P0-06/P1-07 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 942,325 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 942,597 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -83,7 +83,7 @@
     `g_wifiReady`, `g_wifiReason`.
   - Accept: same behavior; no `volatile` left for cross-core state.
 
-- [ ] **P0-06 — Guarantee `cycleEnd` is not dropped.**
+- [x] **P0-06 — Guarantee `cycleEnd` is not dropped.**
   - Evidence: `src/main.cpp:161-163` (drop on full queue), `src/main.cpp:383`
     (`g_lastCycleOk` updated only on `cycleEnd`), `src/SparkplugB.cpp:476-478`.
   - Problem: a dropped final frame suppresses NDATA and leaves `g_lastCycleOk`
@@ -140,7 +140,7 @@
     `netconfig.example.h` with placeholders. Do not commit real credentials.
   - Accept: `netconfig.h` stays gitignored; example file has no secrets.
 
-- [ ] **P1-07 — Initialize node health as unknown.**
+- [x] **P1-07 — Initialize node health as unknown.**
   - Evidence: `src/main.cpp:60` (`g_lastCycleOk = true`), used at
     `src/main.cpp:270`.
   - Problem: the first NBIRTH may report `Modbus_ScanOK = true` before any scan.
@@ -288,6 +288,14 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P0-06 + P1-07 (`fix: guarantee cycle-end NDATA and node health`)
+
+- `g_lastCycleOk` es `std::atomic<bool>` y arranca en `false` (P1-07).
+- `mainPollingTask` actualiza la salud al cerrar cada ciclo, sin depender de la cola.
+- Cola no bloqueante: frames normales se descartan si está llena; `cycleEnd` descarta el más viejo y entra.
+- Probado con bus desconectado: `ok=0`, un NDATA por ciclo, métricas de device `is_null` antes del DDEATH y NBIRTH con `Modbus_ScanOK=false`.
+- Probado con bus conectado: `ok=1`, DDATA/NDATA normales y sin reinicios.
 
 ### 2026-11-04 — P0-01 (`fix: lower Modbus timeout and bound poll cycle`)
 

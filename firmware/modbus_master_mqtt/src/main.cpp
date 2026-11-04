@@ -55,7 +55,7 @@ static const spb::Config kSpbCfg = {
 static uint8_t g_ncmdBuf[512];
 static size_t  g_ncmdExpected = 0;
 
-static bool g_lastCycleOk = true;
+static std::atomic<bool> g_lastCycleOk{false};
 
 static char g_clientId[40];
 
@@ -157,10 +157,25 @@ void mainPollingTask(void *pvParameters) {
                 }
             }
 
-            if (xQueueSend(queueMqtt, &frame, pdMS_TO_TICKS(100)) != pdTRUE) {
-                LOG_W("Cola MQTT llena; frame de %s descartado", dev.deviceId);
+            if (xQueueSend(queueMqtt, &frame, 0) != pdTRUE) {
+                if (!frame.cycleEnd) {
+                    LOG_W("Cola MQTT llena; frame de %s descartado", dev.deviceId);
+                } else {
+                    MeasureFrame discarded{};
+                    if (xQueueReceive(queueMqtt, &discarded, 0) == pdTRUE) {
+                        LOG_W("Cola MQTT llena; frame viejo descartado (dev=%u, ciclo=%lu) "
+                              "para conservar el fin de ciclo",
+                              (unsigned)discarded.deviceIndex,
+                              (unsigned long)discarded.cycleId);
+                    }
+                    if (xQueueSend(queueMqtt, &frame, 0) != pdTRUE) {
+                        LOG_E("No se pudo encolar el frame de fin de ciclo");
+                    }
+                }
             }
         }
+
+        g_lastCycleOk.store(cycleOk);
 
         const uint32_t cycleMs = millis() - cycleStartMs;
         LOG_I("Ciclo %lu: %lu ms, %u devices, ok=%d",
@@ -383,8 +398,6 @@ void tareaRed(void *pvParameters) {
                 lastFrames[frame.deviceIndex] = frame;
                 hasLast[frame.deviceIndex] = true;
             }
-
-            if (frame.cycleEnd) g_lastCycleOk = frame.cycleOk;
 
             if (mqtt && g_birthDone && frame.deviceIndex < kDeviceCount) {
                 const uint8_t d = frame.deviceIndex;

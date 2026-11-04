@@ -95,7 +95,7 @@ There is no test suite and no CI. See `AUDIT.md` for proposed verification work.
 | NCMD decode (`g_cmdPayload`) | esp-mqtt task | Only `handleCommand` |
 | `bdSeq` + NVS | `tareaRed` (`prepareDeath` + persist after NBIRTH) | One NVS write per successful session |
 | WiFi/MQTT state flags | event/callback tasks write, `tareaRed` reads | `std::atomic` |
-| `queueMqtt` | producer `MainPoll`, consumer `NetTask` | 16 frames (`2 * kMaxDevices`) |
+| `queueMqtt` | producer `MainPoll`, consumer `NetTask` | 16 frames (`2 * kMaxDevices`); on overflow, normal frames are dropped and `cycleEnd` evicts the oldest |
 | Actuators | none | Telemetry only; no control loop |
 
 ### Data flow
@@ -105,7 +105,8 @@ There is no test suite and no CI. See `AUDIT.md` for proposed verification work.
 2. `mainPollingTask` iterates devices -> blocks -> `modbus_api_read_registers()`.
    Each `ModbusSignal::decode()` writes into a per-device `SensorAcc`.
 3. It builds one `MeasureFrame` per device, marks the last one `cycleEnd`, and
-   sends it to `queueMqtt` (100 ms timeout).
+   sends it to `queueMqtt` without blocking. If full, normal frames are dropped;
+   a `cycleEnd` frame evicts the oldest frame.
 4. `tareaRed` drives WiFi/MQTT reconnection with backoff, subscribes NCMD, waits
    for NTP, publishes NBIRTH + DBIRTH, then consumes frames.
 5. Per frame: DDEATH after `SPB_DEVICE_DEATH_CYCLES`, DBIRTH on recovery, DDATA
@@ -185,6 +186,8 @@ Rules enforced by the code:
 - `seq` is shared by the whole edge node and resets to 0 on NBIRTH.
 - Timestamps are **UTC epoch ms**; nothing is published until NTP is ready
   (`time(nullptr) > 1700000000`).
+- Node health (`Modbus_ScanOK`) starts as `false` until the first polling cycle
+  completes; `g_lastCycleOk` is written by `mainPollingTask` and read by `tareaRed`.
 - `SPB_MAX_METRICS = 24` **must** match `tools/sparkplug/sparkplug_b.options`.
 - `SPB_MAX_PAYLOAD_BYTES = 1536`; MQTT buffers are 2048.
 
