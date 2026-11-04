@@ -86,6 +86,7 @@ void mainPollingTask(void *pvParameters) {
 
     while (true) {
         const uint64_t ts = spb::nowMs();
+        const uint32_t cycleStartMs = millis();
         bool cycleOk = true;
 
         for (uint8_t d = 0; d < kDeviceCount; ++d) {
@@ -124,7 +125,7 @@ void mainPollingTask(void *pvParameters) {
                     a.value[s.channel] = s.decode(r.data, r.data_len);
                 }
 
-                vTaskDelay(pdMS_TO_TICKS(10));   // margen RS485 entre bloques
+                vTaskDelay(pdMS_TO_TICKS(MODBUS_BLOCK_GAP_MS));
             }
 
             if (!allOk) cycleOk = false;
@@ -160,6 +161,11 @@ void mainPollingTask(void *pvParameters) {
                 LOG_W("Cola MQTT llena; frame de %s descartado", dev.deviceId);
             }
         }
+
+        const uint32_t cycleMs = millis() - cycleStartMs;
+        LOG_I("Ciclo %lu: %lu ms, %u devices, ok=%d",
+              (unsigned long)cycleId, (unsigned long)cycleMs,
+              (unsigned)kDeviceCount, cycleOk ? 1 : 0);
 
         ++cycleId;
         vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
@@ -460,8 +466,9 @@ void setup() {
         esp_restart();
     }
 
-    Serial.printf("Configurado: bus %lu baud, %u devices, intervalo %lu ms\n",
-                  kBusCfg.baudRate, (unsigned)kDeviceCount, (unsigned long)POLL_INTERVAL_MS);
+    Serial.printf("Configurado: bus %lu baud, %u devices, timeout %lu ms, intervalo %lu ms\n",
+                  kBusCfg.baudRate, (unsigned)kDeviceCount,
+                  (unsigned long)kBusCfg.defaultTimeoutMs, (unsigned long)POLL_INTERVAL_MS);
 }
 
 void loop() {

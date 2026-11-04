@@ -126,7 +126,7 @@ constexpr DeviceConfig kDevices[] = {
         "medidor_trifasico_1",     // deviceId
         1,                         // slaveId
         10,                        // aliasBase (10..26)
-        2000,                      // timeoutMs
+        MODBUS_DEFAULT_TIMEOUT_MS, // timeoutMs
         kMeterBlocks,  arrayCount(kMeterBlocks),
         kMeterSignals, arrayCount(kMeterSignals),
         kMeterMetrics, arrayCount(kMeterMetrics),

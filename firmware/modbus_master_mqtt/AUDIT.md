@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-04/P0-05 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-04/P0-05 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 942,189 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 942,325 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -36,7 +36,7 @@
 
 ### P0 — Correctness / field reliability
 
-- [ ] **P0-01 — Reduce Modbus timeout and bound the poll cycle.**
+- [x] **P0-01 — Reduce Modbus timeout and bound the poll cycle.**
   - Evidence: `src/ModbusAPI.cpp:67` (`syncRequest` blocks), `include/ModbusConfig.h:24`
     (2000 ms), `include/DevicesConfig.h:129` (2000 ms), `src/main.cpp:100-130`.
   - Problem: 4 blocks x 2 s = up to ~8 s per offline device; more devices/blocks
@@ -288,6 +288,13 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P0-01 (`fix: lower Modbus timeout and bound poll cycle`)
+
+- Timeout por bloque: 500 ms (`MODBUS_DEFAULT_TIMEOUT_MS`).
+- Gap entre bloques: `MODBUS_BLOCK_GAP_MS` (10 ms).
+- Log por ciclo con duración real (`Ciclo N: X ms`).
+- Presupuesto: 1 device ~2.03 s; 8 devices ~16.3 s < 30 s.
 
 ### 2026-11-04 — Fase 0 + P0-04/P0-05 (`fix: harden Sparkplug session and build reproducibility`)
 

@@ -142,9 +142,13 @@ Bus parameters (`include/ModbusConfig.h`):
 |---|---|
 | UART | `Serial2`, RX `13`, TX `12` |
 | Baud / mode | 9600, `SERIAL_8N1` |
-| Default timeout | 2000 ms |
+| Default timeout | 500 ms (`MODBUS_DEFAULT_TIMEOUT_MS`) |
+| Block gap | 10 ms (`MODBUS_BLOCK_GAP_MS`) |
 | Poll interval | 30000 ms (`POLL_INTERVAL_MS`) |
 | DE/RE pin | `-1` (not configured) |
+
+Worst-case scan: one 4-block device = 4\*500 + 3\*10 = **~2.03 s**;
+8 devices = **~16.3 s**, still below `POLL_INTERVAL_MS`.
 
 Decode helpers: `mb_u16`, `mb_i32`, `mb_byte` (`include/ModbusConfig.h:32-50`).
 The meter sends **pure little-endian** (low byte / low word first). Bounds
@@ -233,8 +237,8 @@ After changing any of the above, update this file if the invariants changed.
 See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 
 - NBIRTH requires public NTP; an isolated LAN leaves the node silent.
-- Modbus reads are synchronous with a 2 s timeout -> up to ~8 s per offline
-  device per cycle.
+- Modbus reads are synchronous with a 500 ms timeout -> up to ~2 s per offline
+  device per cycle (8 devices ~16.3 s, still below the 30 s poll interval).
 - No task watchdog and no stack high-water instrumentation.
 - DE/RE pin is not configured; GPIO12 strapping must be verified.
 - Birth retry is all-or-nothing (a failed DBIRTH retries the whole NBIRTH).
