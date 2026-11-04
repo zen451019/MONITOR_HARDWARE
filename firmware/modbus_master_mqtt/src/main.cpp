@@ -352,8 +352,6 @@ void tareaRed(void *pvParameters) {
         LOG_E("NetTask: no se pudo suscribir al TWDT (%d)", (int)wdtErr);
     }
 
-
-
     uint32_t lastStackLogMs = 0;
 
     while (true) {
@@ -394,8 +392,24 @@ void tareaRed(void *pvParameters) {
         }
         prevMqtt = mqtt;
 
+        static bool prevNtpReady = false;
+        const bool ntpReady = spb::timeReady();
+        if (ntpReady && !prevNtpReady) {
+            LOG_I("NTP: hora sincronizada");
+        }
+        prevNtpReady = ntpReady;
+
         if (wifi && !mqtt && !g_mqttConnecting) {
-            if (mqttDiscSince == 0) {
+            if (!ntpReady) {
+                static uint32_t lastNtpLog = 0;
+                if (lastNtpLog == 0 ||
+                    (uint32_t)(millis() - lastNtpLog) >= 10000) {
+                    lastNtpLog = millis();
+                    LOG_W("NTP: esperando sincronizacion antes de conectar MQTT...");
+                }
+                mqttDiscSince = 0;
+                mqttBackoff = 2000;
+            } else if (mqttDiscSince == 0) {
                 mqttDiscSince = millis();
             } else if (millis() - mqttDiscSince >= mqttBackoff) {
                 LOG_I("MQTT: conectando a %s:%u...", MQTT_HOST, (unsigned)MQTT_PORT);

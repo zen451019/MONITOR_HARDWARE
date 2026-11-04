@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-03/P0-04/P0-05/P0-06/P1-07/P2-07 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-07/P2-07/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 943,225 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 943,757 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -46,7 +46,7 @@
   - Accept: worst-case scan for all offline devices is measured and < poll
     interval; no `queueMqtt` overflows in a 10-minute offline test.
 
-- [ ] **P0-02 — Make NTP a documented, configurable dependency.**
+- [x] **P0-02 — Make NTP a documented, configurable dependency.**
   - Evidence: `src/SparkplugB.cpp:261-268`, `src/SparkplugB.cpp:362-364`,
     `src/main.cpp:49-54` (NTP servers), `src/SparkplugB.cpp:342` (`configTime`).
   - Problem: no NBIRTH (and therefore no data) until `time() > 1700000000`; an
@@ -236,7 +236,7 @@
   - Change: commit an example with placeholders and document the setup step.
   - Accept: a fresh clone knows what to create; no secrets committed.
 
-- [ ] **P2-10 — Document NDEATH timestamp edge case.**
+- [x] **P2-10 — Document NDEATH timestamp edge case.**
   - Evidence: `src/SparkplugB.cpp:385-390` (`prepareDeath` may build NDEATH with
     `has_timestamp = false` if NTP is not ready).
   - Change: decide whether to delay CONNECT until `timeReady()` or document the
@@ -288,6 +288,15 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P0-02 + P2-10 (`fix: require NTP before MQTT connect`)
+
+- MQTT CONNECT se retrasa hasta `spb::timeReady()`; el LWT/NDEATH se arma solo con timestamp válido.
+- Se loguean los servidores NTP al arrancar y el estado de espera cada 10 s.
+- Sin NTP: el nodo no conecta MQTT ni publica birth; solo loguea la espera (probado 30 s).
+- Con NTP: espera → sincroniza → conecta → NBIRTH + DBIRTH; NDEATH preparado con timestamp (29 bytes).
+- Documentado que en LAN aislada se configura `SPB_NTP1`/`SPB_NTP2` con un NTP local (UDP 123).
+- `firmware.bin` final: 943,757 bytes.
 
 ### 2026-11-04 — P0-03 + P2-07 (`fix: add task watchdog and stack diagnostics`)
 

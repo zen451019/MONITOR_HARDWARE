@@ -356,6 +356,9 @@ void begin(const Config& cfg) {
         prefs.end();
     }
 
+    LOG_I("Sparkplug: NTP1=%s NTP2=%s",
+          cfg.ntp1 != nullptr ? cfg.ntp1 : "(null)",
+          cfg.ntp2 != nullptr ? cfg.ntp2 : "(null)");
     configTime(0, 0, cfg.ntp1, cfg.ntp2);
 
     uint32_t nextAlias = SPB_NODE_ALIAS_END + 1;
@@ -396,6 +399,9 @@ void prepareDeath() {
     g_bdSeqDirty = true;
 
     const uint64_t ts = nowMs();
+    if (ts == 0) {
+        LOG_E("Sparkplug: NDEATH sin timestamp (NTP no listo)");
+    }
 
     memset(&g_payload, 0, sizeof(g_payload));
     g_payload.has_timestamp = (ts > 0);

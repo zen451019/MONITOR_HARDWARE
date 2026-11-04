@@ -112,8 +112,8 @@ Both application tasks are subscribed to the framework TWDT (5 s, panic).
 3. It builds one `MeasureFrame` per device, marks the last one `cycleEnd`, and
    sends it to `queueMqtt` without blocking. If full, normal frames are dropped;
    a `cycleEnd` frame evicts the oldest frame.
-4. `tareaRed` drives WiFi/MQTT reconnection with backoff, subscribes NCMD, waits
-   for NTP, publishes NBIRTH + DBIRTH, then consumes frames.
+4. `tareaRed` drives WiFi/MQTT reconnection with backoff, waits for NTP before
+   connecting, subscribes NCMD, publishes NBIRTH + DBIRTH, then consumes frames.
 5. Per frame: DDEATH after `SPB_DEVICE_DEATH_CYCLES`, DBIRTH on recovery, DDATA
    when online, NDATA on `cycleEnd`.
 6. NCMD `Node Control/Rebirth` is decoded in the MQTT task, debounced, and sets
@@ -191,6 +191,8 @@ Rules enforced by the code:
 - `seq` is shared by the whole edge node and resets to 0 on NBIRTH.
 - Timestamps are **UTC epoch ms**; nothing is published until NTP is ready
   (`time(nullptr) > 1700000000`).
+- MQTT CONNECT is gated on `spb::timeReady()`, so the LWT/NDEATH is always built
+  with a valid timestamp. Without NTP the node logs the wait and never connects.
 - Node health (`Modbus_ScanOK`) starts as `false` until the first polling cycle
   completes; `g_lastCycleOk` is written by `mainPollingTask` and read by `tareaRed`.
 - `SPB_MAX_METRICS = 24` **must** match `tools/sparkplug/sparkplug_b.options`.
@@ -244,7 +246,9 @@ After changing any of the above, update this file if the invariants changed.
 
 See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 
-- NBIRTH requires public NTP; an isolated LAN leaves the node silent.
+- NBIRTH requires valid UTC time. On an isolated LAN, set `SPB_NTP1`/`SPB_NTP2`
+  in `netconfig.h` to a local NTP server (UDP 123); without NTP the node does
+  not connect or publish.
 - Modbus reads are synchronous with a 500 ms timeout -> up to ~2 s per offline
   device per cycle (8 devices ~16.3 s, still below the 30 s poll interval).
 - Both tasks are subscribed to the 5 s TWDT; stack high-water is logged every
@@ -260,7 +264,7 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 
 | Symptom | Likely cause |
 |---|---|
-| No Sparkplug messages at all | NTP not synced, or MQTT not connected, or birth not done |
+| No Sparkplug messages at all | NTP not synced (node does not connect until NTP), or MQTT not connected, or birth not done |
 | Garbage on serial monitor | Wrong `monitor_speed` (must be 115200) |
 | Device never appears | Wrong slave id / wiring / DE-RE / timeout too short |
 | DDEATH every ~90 s | Device offline for 3 consecutive cycles |
