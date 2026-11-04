@@ -3,7 +3,7 @@
 > Context file for AI coding agents (opencode, Cursor, Claude Code, etc.).
 > Read this before editing. Keep it short; prefer references to code over copies.
 >
-> **Last verified:** 2026-11-03
+> **Last verified:** 2026-11-04
 > **Scope:** this folder only (`firmware/modbus_master_mqtt`). Other firmware
 > variants in the repo are out of scope.
 
@@ -21,9 +21,10 @@ Modbus RTU (RS485, Serial2)  ->  MeasureFrame  ->  queue  ->  Sparkplug B  ->  M
 
 - Board: `ttgo-lora32-v21` (ESP32, 4 MB flash). The LoRa radio is **not used**.
 - Framework: Arduino on ESP-IDF (`framework = arduino`).
-- Modbus library: eModbus (`ModbusClientRTU`), pulled from git master (unpinned).
+- Modbus library: eModbus (`ModbusClientRTU`), pinned to tag `v1.7.4.stable`.
 - Protobuf: nanopb 0.4.92. Generated files are committed; do not edit them.
-- Current build size: ~952 KB (`firmware.bin`), fits the default partition.
+- Toolchain: `platform = espressif32@7.1.3` (pinned).
+- Current build size: ~942 KB (`firmware.bin` = 942,189 bytes), fits the default partition.
 
 Source of truth for configuration is the `include/*Config.h` headers, not this
 file. If a value here disagrees with code, the code wins — and this file is stale.
@@ -65,9 +66,9 @@ $pio = "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe"
 & $pio run -t clean        # clean
 ```
 
-**Known gotcha:** firmware calls `Serial.begin(115200)` (`src/main.cpp:417`) but
-`platformio.ini` sets `monitor_speed = 921600`. Until this is reconciled, the
-monitor will show garbage. This is tracked in `AUDIT.md` (M-01).
+`Serial.begin(115200)` and `monitor_speed = 115200` are aligned. The build uses
+`-Wall -Wextra` on project sources (`build_src_flags`) and
+`monitor_filters = esp32_exception_decoder, time`.
 
 There is no test suite and no CI. See `AUDIT.md` for proposed verification work.
 
@@ -92,8 +93,8 @@ There is no test suite and no CI. See `AUDIT.md` for proposed verification work.
 | MQTT client (`publish`, `subscribe`, `connect`, `setWill`) | `tareaRed` only | Callbacks run in the esp-mqtt task |
 | Sparkplug encode state (`g_payload`, `g_txBuf`, `g_seq`) | `tareaRed` only | Never encode from another task |
 | NCMD decode (`g_cmdPayload`) | esp-mqtt task | Only `handleCommand` |
-| `bdSeq` + NVS | `tareaRed` (`prepareDeath`) | Flash write on every connect attempt (see audit) |
-| WiFi state flags | event task writes, `tareaRed` reads | Currently `volatile`, not atomic |
+| `bdSeq` + NVS | `tareaRed` (`prepareDeath` + persist after NBIRTH) | One NVS write per successful session |
+| WiFi/MQTT state flags | event/callback tasks write, `tareaRed` reads | `std::atomic` |
 | `queueMqtt` | producer `MainPoll`, consumer `NetTask` | 16 frames (`2 * kMaxDevices`) |
 | Actuators | none | Telemetry only; no control loop |
 
@@ -175,8 +176,8 @@ Rules enforced by the code:
 
 - Aliases are **unique across the whole edge node**: node aliases `1..6`,
   device aliases start at `aliasBase` (`10..26` today).
-- `bdSeq` increments on every new MQTT CONNECT and is persisted in NVS
-  namespace `spb`, key `bdseq`.
+- `bdSeq` increments on every new MQTT CONNECT in RAM; it is persisted in NVS
+  namespace `spb`, key `bdseq`, only after a successful NBIRTH.
 - `seq` is shared by the whole edge node and resets to 0 on NBIRTH.
 - Timestamps are **UTC epoch ms**; nothing is published until NTP is ready
   (`time(nullptr) > 1700000000`).
@@ -235,9 +236,6 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 - Modbus reads are synchronous with a 2 s timeout -> up to ~8 s per offline
   device per cycle.
 - No task watchdog and no stack high-water instrumentation.
-- `Serial` baud (115200) != monitor speed (921600).
-- Cross-core flags use `volatile`, not `std::atomic`.
-- `prepareDeath()` writes NVS on every connect attempt.
 - DE/RE pin is not configured; GPIO12 strapping must be verified.
 - Birth retry is all-or-nothing (a failed DBIRTH retries the whole NBIRTH).
 - Documentation drift: `TUTORIAL_MODBUS.md` and `SensorRegistry.h` still mention
@@ -250,7 +248,7 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 | Symptom | Likely cause |
 |---|---|
 | No Sparkplug messages at all | NTP not synced, or MQTT not connected, or birth not done |
-| Garbage on serial monitor | Baud mismatch (115200 vs 921600) |
+| Garbage on serial monitor | Wrong `monitor_speed` (must be 115200) |
 | Device never appears | Wrong slave id / wiring / DE-RE / timeout too short |
 | DDEATH every ~90 s | Device offline for 3 consecutive cycles |
 | Rebirth ignored | NCMD not subscribed yet, wrong alias/name, or debounce window |

@@ -6,14 +6,15 @@
  */
 
 #include <Arduino.h>
-#include <SPI.h>
 #include <WiFi.h>
 #include "MqttTransport.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <time.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 
 #include "ModbusAPI.h"
@@ -29,20 +30,17 @@
 // Runtime state
 // =================================================================================================
 
-volatile uint32_t g_pollIntervalMs = POLL_INTERVAL_MS;
-static TaskHandle_t g_pollTaskHandle = NULL;
-
 QueueHandle_t queueMqtt;
 
-volatile bool g_wifiReady = false;
-volatile uint8_t g_wifiReason = 0;
+std::atomic<bool> g_wifiReady{false};
+std::atomic<uint8_t> g_wifiReason{0};
 
 MqttTransport mqttClient;
-volatile bool g_mqttReady = false;
-volatile bool g_mqttConnecting = false;
-volatile bool g_needBirth = false;
-volatile bool g_birthDone = false;
-volatile bool g_ncmdSubscribed = false;
+std::atomic<bool> g_mqttReady{false};
+std::atomic<bool> g_mqttConnecting{false};
+std::atomic<bool> g_needBirth{false};
+std::atomic<bool> g_birthDone{false};
+std::atomic<bool> g_ncmdSubscribed{false};
 
 static uint32_t g_subscribeSentAt = 0;
 
@@ -57,7 +55,7 @@ static const spb::Config kSpbCfg = {
 static uint8_t g_ncmdBuf[512];
 static size_t  g_ncmdExpected = 0;
 
-static volatile bool g_lastCycleOk = true;
+static bool g_lastCycleOk = true;
 
 static char g_clientId[40];
 
@@ -164,7 +162,7 @@ void mainPollingTask(void *pvParameters) {
         }
 
         ++cycleId;
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(g_pollIntervalMs));
+        vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
     }
 }
 
@@ -421,13 +419,16 @@ void setup() {
     }
     Serial.println("Iniciando modbus_master_mqtt (Sparkplug B)...");
 
-    SPI.begin();
-
     modbus_api_init(Serial2, kBusCfg.rxPin, kBusCfg.txPin,
                     kBusCfg.baudRate, kBusCfg.uartConfig,
                     kBusCfg.defaultTimeoutMs);
 
     queueMqtt = xQueueCreate(2 * kMaxDevices, sizeof(MeasureFrame));
+    if (queueMqtt == nullptr) {
+        LOG_E("No se pudo crear la cola MQTT");
+        Serial.flush();
+        esp_restart();
+    }
 
     spb::begin(kSpbCfg);
 
@@ -448,11 +449,19 @@ void setup() {
     LOG_I("MQTT: broker %s:%u, grupo Sparkplug '%s', nodo '%s'",
           MQTT_HOST, (unsigned)MQTT_PORT, SPB_GROUP_ID, SPB_EDGE_NODE);
 
-    xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 8192, NULL, 3, &g_pollTaskHandle, 0);
-    xTaskCreatePinnedToCore(tareaRed, "NetTask", 12288, NULL, 5, NULL, 1);
+    if (xTaskCreatePinnedToCore(mainPollingTask, "MainPoll", 8192, NULL, 3, NULL, 0) != pdPASS) {
+        LOG_E("No se pudo crear la tarea MainPoll");
+        Serial.flush();
+        esp_restart();
+    }
+    if (xTaskCreatePinnedToCore(tareaRed, "NetTask", 12288, NULL, 5, NULL, 1) != pdPASS) {
+        LOG_E("No se pudo crear la tarea NetTask");
+        Serial.flush();
+        esp_restart();
+    }
 
     Serial.printf("Configurado: bus %lu baud, %u devices, intervalo %lu ms\n",
-                  kBusCfg.baudRate, (unsigned)kDeviceCount, (unsigned long)g_pollIntervalMs);
+                  kBusCfg.baudRate, (unsigned)kDeviceCount, (unsigned long)POLL_INTERVAL_MS);
 }
 
 void loop() {

@@ -35,9 +35,10 @@ char g_topicDbirth[kMaxDevices][kTopicSize];
 char g_topicDdata[kMaxDevices][kTopicSize];
 char g_topicDdeath[kMaxDevices][kTopicSize];
 
-uint8_t g_bdSeqNext = 0;
-uint8_t g_bdSeq     = 0;
-uint8_t g_seq       = 0;
+uint8_t g_bdSeqNext  = 0;
+uint8_t g_bdSeq      = 0;
+uint8_t g_seq        = 0;
+bool    g_bdSeqDirty = false;
 
 uint8_t g_deathBuf[64];
 size_t  g_deathLen = 0;
@@ -284,6 +285,19 @@ bool publishDeviceBirthInternal(MqttTransport& mqtt, uint8_t deviceIndex,
     return true;
 }
 
+void persistBdSeq() {
+    if (!g_bdSeqDirty) return;
+
+    Preferences prefs;
+    if (prefs.begin(kNvsNamespace, false)) {
+        prefs.putUChar(kNvsKey, g_bdSeqNext);
+        prefs.end();
+        g_bdSeqDirty = false;
+    } else {
+        LOG_W("Sparkplug: no se pudo persistir bdSeq");
+    }
+}
+
 bool publishNodeDataInternal(MqttTransport& mqtt, const spb::NodeHealth& health,
                              uint64_t ts) {
     if (ts == 0) return false;
@@ -372,15 +386,11 @@ uint64_t nowMs() {
 }
 
 void prepareDeath() {
-    // La spec exige incrementar bdSeq en cada nuevo CONNECT.
+    // La spec exige incrementar bdSeq en cada nuevo CONNECT. Se persiste en NVS
+    // solo cuando el NBIRTH se publica correctamente (ver persistBdSeq()).
     g_bdSeq = g_bdSeqNext;
     g_bdSeqNext = (uint8_t)((g_bdSeq + 1) & 0xFF);
-
-    Preferences prefs;
-    if (prefs.begin(kNvsNamespace, false)) {
-        prefs.putUChar(kNvsKey, g_bdSeqNext);
-        prefs.end();
-    }
+    g_bdSeqDirty = true;
 
     const uint64_t ts = nowMs();
 
@@ -433,6 +443,8 @@ bool publishBirth(MqttTransport& mqtt, const NodeHealth& health,
     if (!publishPayload(mqtt, g_topicNbirth, 0, g_payload, "NBIRTH")) {
         return false;
     }
+
+    persistBdSeq();
 
     g_seq = 1;
 

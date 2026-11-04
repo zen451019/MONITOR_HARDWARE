@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** audit complete, no code changes applied yet.
-> **Date:** 2026-11-03
+> **Status:** Fase 0 + P0-04/P0-05 implementados; resto pendiente.
+> **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 952,240 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 942,189 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -66,7 +66,7 @@
   - Accept: unplugging the broker/bus does not trip the watchdog; a simulated
     hang reboots within the configured timeout.
 
-- [ ] **P0-04 — Stop writing NVS on every connect attempt.**
+- [x] **P0-04 — Stop writing NVS on every connect attempt.**
   - Evidence: `src/SparkplugB.cpp:374-383` (`prepareDeath` writes `bdSeq`),
     `src/main.cpp:339`.
   - Problem: with 30 s backoff this is ~2.9 k flash writes/day; unnecessary wear.
@@ -75,7 +75,7 @@
   - Accept: only one NVS write per successful session; `bdSeq` still increments
     per CONNECT and matches NDEATH/NBIRTH.
 
-- [ ] **P0-05 — Replace cross-core `volatile` flags with atomics.**
+- [x] **P0-05 — Replace cross-core `volatile` flags with atomics.**
   - Evidence: `src/main.cpp:37-45` (flags), `src/main.cpp:189-232` (callbacks).
   - Problem: `volatile` gives no atomicity or ordering guarantee between cores.
   - Change: use `std::atomic<bool>`/`std::atomic<uint8_t>` for `g_mqttReady`,
@@ -94,13 +94,13 @@
 
 ### P1 — Reliability / maintainability
 
-- [ ] **P1-01 — Fix serial monitor baud mismatch.**
+- [x] **P1-01 — Fix serial monitor baud mismatch.**
   - Evidence: `src/main.cpp:417` (`Serial.begin(115200)`), `platformio.ini:5`
     (`monitor_speed = 921600`).
   - Change: align both (prefer `115200` unless boot logs need faster).
   - Accept: monitor shows readable text at the configured speed.
 
-- [ ] **P1-02 — Remove or implement the dead poll-notification path.**
+- [x] **P1-02 — Remove or implement the dead poll-notification path.**
   - Evidence: `src/main.cpp:33` (`g_pollTaskHandle`), `src/main.cpp:167`
     (`ulTaskNotifyTake`), `src/main.cpp:451` (handle stored); no
     `xTaskNotifyGive` in the project.
@@ -147,19 +147,19 @@
   - Change: start `false` or add an explicit "unknown" state.
   - Accept: NBIRTH before the first cycle reports a non-successful scan.
 
-- [ ] **P1-08 — Check task creation results.**
+- [x] **P1-08 — Check task creation results.**
   - Evidence: `src/main.cpp:451-452`.
   - Change: assert/log if `xTaskCreatePinnedToCore` fails; define fallback.
   - Accept: failure path is logged and does not boot half-configured.
 
-- [ ] **P1-09 — Pin toolchain and libraries for reproducibility.**
+- [x] **P1-09 — Pin toolchain and libraries for reproducibility.**
   - Evidence: `platformio.ini:2` (`platform = espressif32`, no version),
     `platformio.ini:7` (eModbus from `master`).
   - Change: pin the platform version and an eModbus tag/commit; add
     `build_flags` for `-Wall -Wextra` and `LOG_LEVEL`; add `monitor_filters`.
   - Accept: two clean builds on different days produce the same dependency set.
 
-- [ ] **P1-10 — Remove unused `SPI.begin()`.**
+- [x] **P1-10 — Remove unused `SPI.begin()`.**
   - Evidence: `src/main.cpp:424`; the LoRa radio is not used.
   - Change: delete it (or justify if it is needed for the board).
   - Accept: build + boot + Modbus unaffected.
@@ -215,7 +215,7 @@
     and the datatype carries the sign, or merge into one helper.
   - Accept: same wire output.
 
-- [ ] **P2-06 — Remove unused/undocumented knobs.**
+- [x] **P2-06 — Remove unused/undocumented knobs.**
   - Evidence: `src/main.cpp:32` (`g_pollIntervalMs` is never written).
   - Change: delete or expose a documented API to change the interval.
   - Accept: no unused global.
@@ -289,4 +289,15 @@
 
 ## 6. Done
 
-_(empty — add implemented items here with date and commit reference)_
+### 2026-11-04 — Fase 0 + P0-04/P0-05 (`fix: harden Sparkplug session and build reproducibility`)
+
+- **P1-01:** `monitor_speed` alineado a 115200.
+- **P1-09:** platform `espressif32@7.1.3` y eModbus `v1.7.4.stable` pineados;
+  `-Wall -Wextra` y `monitor_filters` agregados.
+- **P1-10:** eliminado `SPI.begin()` no usado.
+- **P1-02 / P2-06:** eliminado el camino de notificación muerto (`g_pollTaskHandle`,
+  `ulTaskNotifyTake`, `g_pollIntervalMs`); ahora `vTaskDelay(POLL_INTERVAL_MS)`.
+- **P1-08:** se verifican `xQueueCreate` y `xTaskCreatePinnedToCore`.
+- **P0-05:** flags cross-core migrados a `std::atomic`.
+- **P0-04:** `bdSeq` se persiste en NVS solo tras un NBIRTH exitoso.
+- Build limpio (solo warnings de librerías externas): `firmware.bin` = 942,189 bytes.
