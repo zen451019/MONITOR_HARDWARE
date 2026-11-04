@@ -134,7 +134,7 @@ bool MqttTransport::begin(const char* host, uint16_t port,
     cfg.task_stack = 8192;
     cfg.buffer_size = 2048;
     cfg.out_buffer_size = 2048;
-    cfg.network_timeout_ms = 10000;
+    cfg.network_timeout_ms = 2000;   // < TWDT (5 s): acota bloqueos de red
 
     if (tls != nullptr) {
         cfg.transport = MQTT_TRANSPORT_OVER_SSL;

@@ -15,6 +15,7 @@
 #include <ctime>
 #include <time.h>
 #include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 
 #include "ModbusAPI.h"
@@ -74,6 +75,23 @@ static spb::NodeHealth makeHealth(bool scanOk) {
     return h;
 }
 
+static constexpr uint32_t STACK_LOG_INTERVAL_MS = 60000;
+
+static void wdtDelay(uint32_t totalMs) {
+    constexpr uint32_t kChunkMs = 1000;
+    while (totalMs > 0) {
+        (void)esp_task_wdt_reset();
+        const uint32_t step = (totalMs > kChunkMs) ? kChunkMs : totalMs;
+        vTaskDelay(pdMS_TO_TICKS(step));
+        totalMs -= step;
+    }
+}
+
+static void logStack(const char* taskName) {
+    LOG_I("Stack %s: %u bytes libres", taskName,
+          (unsigned)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
+}
+
 // =================================================================================================
 // Main polling task - recorre Devices, lee bloques y encola un frame por Device
 // =================================================================================================
@@ -81,10 +99,18 @@ static spb::NodeHealth makeHealth(bool scanOk) {
 void mainPollingTask(void *pvParameters) {
     (void)pvParameters;
 
+    const esp_err_t wdtErr = esp_task_wdt_add(NULL);
+    if (wdtErr != ESP_OK) {
+        LOG_E("MainPoll: no se pudo suscribir al TWDT (%d)", (int)wdtErr);
+    }
+
     uint8_t  failStreak[kMaxDevices] = {};
     uint32_t cycleId = 0;
+    uint32_t lastStackLogMs = 0;
 
     while (true) {
+        (void)esp_task_wdt_reset();
+
         const uint64_t ts = spb::nowMs();
         const uint32_t cycleStartMs = millis();
         bool cycleOk = true;
@@ -126,6 +152,7 @@ void mainPollingTask(void *pvParameters) {
                 }
 
                 vTaskDelay(pdMS_TO_TICKS(MODBUS_BLOCK_GAP_MS));
+                (void)esp_task_wdt_reset();
             }
 
             if (!allOk) cycleOk = false;
@@ -182,8 +209,14 @@ void mainPollingTask(void *pvParameters) {
               (unsigned long)cycleId, (unsigned long)cycleMs,
               (unsigned)kDeviceCount, cycleOk ? 1 : 0);
 
+        if (lastStackLogMs == 0 ||
+            (uint32_t)(millis() - lastStackLogMs) >= STACK_LOG_INTERVAL_MS) {
+            lastStackLogMs = millis();
+            logStack("MainPoll");
+        }
+
         ++cycleId;
-        vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
+        wdtDelay(POLL_INTERVAL_MS);
     }
 }
 
@@ -270,7 +303,9 @@ static bool publishBirthIfReady(const MeasureFrame* lastFrames,
     if (!g_ncmdSubscribed) {
         if (g_subscribeSentAt == 0 || (millis() - g_subscribeSentAt) >= 2000) {
             g_subscribeSentAt = millis();
+            (void)esp_task_wdt_reset();
             mqttClient.subscribe(spb::ncmdTopic(), 1);
+            (void)esp_task_wdt_reset();
             LOG_I("Sparkplug: suscribiendo NCMD...");
         }
         return false;
@@ -312,7 +347,18 @@ void tareaRed(void *pvParameters) {
     uint32_t mqttDiscSince = 0;
     uint32_t mqttBackoff   = 2000;
 
+    const esp_err_t wdtErr = esp_task_wdt_add(NULL);
+    if (wdtErr != ESP_OK) {
+        LOG_E("NetTask: no se pudo suscribir al TWDT (%d)", (int)wdtErr);
+    }
+
+
+
+    uint32_t lastStackLogMs = 0;
+
     while (true) {
+        (void)esp_task_wdt_reset();
+
         const bool wifi = (WiFi.status() == WL_CONNECTED);
         const bool mqtt = g_mqttReady;
 
@@ -356,11 +402,16 @@ void tareaRed(void *pvParameters) {
 
                 g_mqttConnecting = true;
                 spb::prepareDeath();
+
+                (void)esp_task_wdt_reset();
                 mqttClient.setWill(spb::deathTopic(), 1, false,
                                    reinterpret_cast<const char*>(spb::deathPayload()),
                                    spb::deathPayloadLen());
+                (void)esp_task_wdt_reset();
 
-                if (!mqttClient.connect()) {
+                const bool connectStarted = mqttClient.connect();
+                (void)esp_task_wdt_reset();
+                if (!connectStarted) {
                     g_mqttConnecting = false;
                     LOG_W("MQTT: fallo al iniciar conexion");
                 }
@@ -423,6 +474,12 @@ void tareaRed(void *pvParameters) {
                 }
             }
         }
+
+        if (lastStackLogMs == 0 ||
+            (uint32_t)(millis() - lastStackLogMs) >= STACK_LOG_INTERVAL_MS) {
+            lastStackLogMs = millis();
+            logStack("NetTask");
+        }
     }
 }
 
@@ -437,6 +494,7 @@ void setup() {
         while (!Serial && (millis() - t0) < 3000) { delay(10); }
     }
     Serial.println("Iniciando modbus_master_mqtt (Sparkplug B)...");
+    LOG_I("Reset reason: %d", (int)esp_reset_reason());
 
     modbus_api_init(Serial2, kBusCfg.rxPin, kBusCfg.txPin,
                     kBusCfg.baudRate, kBusCfg.uartConfig,

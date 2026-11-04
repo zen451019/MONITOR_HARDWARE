@@ -85,6 +85,11 @@ There is no test suite and no CI. See `AUDIT.md` for proposed verification work.
 | Arduino `loopTask` | 1 | 1 | default | Only `vTaskDelay(1000)`; does nothing |
 | esp-mqtt event task | IDF | IDF | 8192 | Runs MQTT callbacks (`onConnect`, `onMessage`, ...) |
 
+Both application tasks are subscribed to the framework TWDT (5 s, panic).
+`MainPoll` feeds after every Modbus block and during the chunked 30 s wait;
+`NetTask` feeds every loop and around MQTT API calls. MQTT
+`network_timeout_ms` is 2 s to stay below the TWDT.
+
 ### Resource ownership (do not violate)
 
 | Resource | Owner | Notes |
@@ -242,7 +247,8 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 - NBIRTH requires public NTP; an isolated LAN leaves the node silent.
 - Modbus reads are synchronous with a 500 ms timeout -> up to ~2 s per offline
   device per cycle (8 devices ~16.3 s, still below the 30 s poll interval).
-- No task watchdog and no stack high-water instrumentation.
+- Both tasks are subscribed to the 5 s TWDT; stack high-water is logged every
+  60 s (`STACK_LOG_INTERVAL_MS`).
 - DE/RE pin is not configured; GPIO12 strapping must be verified.
 - Birth retry is all-or-nothing (a failed DBIRTH retries the whole NBIRTH).
 - Documentation drift: `TUTORIAL_MODBUS.md` and `SensorRegistry.h` still mention
@@ -261,6 +267,7 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 | Rebirth ignored | NCMD not subscribed yet, wrong alias/name, or debounce window |
 | Broker rejects connection | Wrong host/port, client id collision, anonymous auth disabled |
 | Node reboots when bus is noisy | GPIO12 strapping, brownout, or missing watchdog/recovery |
+| Reboot every ~5 s, `Reset reason: 6` | A task stopped feeding the TWDT; check blocking calls |
 
 ---
 

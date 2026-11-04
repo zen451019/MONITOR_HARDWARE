@@ -5,6 +5,7 @@
 #include "MqttTransport.h"
 #include <Arduino.h>
 #include <Preferences.h>
+#include <esp_task_wdt.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -143,8 +144,10 @@ bool publishPayload(MqttTransport& mqtt, const char* topic, uint8_t qos,
     const size_t len = encodeToBuffer(g_txBuf, sizeof(g_txBuf), payload);
     if (len == 0) return false;
 
+    (void)esp_task_wdt_reset();
     const uint16_t packetId = mqtt.publish(
         topic, qos, false, reinterpret_cast<const char*>(g_txBuf), len);
+    (void)esp_task_wdt_reset();
 
     if (packetId == 0) {
         LOG_W("Sparkplug: publish fallo (%s, %s)", what, topic);

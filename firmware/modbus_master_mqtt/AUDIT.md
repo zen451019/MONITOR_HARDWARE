@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-04/P0-05/P0-06/P1-07 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-03/P0-04/P0-05/P0-06/P1-07/P2-07 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 942,597 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 943,225 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -57,7 +57,7 @@
   - Accept: README/AGENTS note the requirement; test case on LAN without internet
     is described (expected behavior, not a hang).
 
-- [ ] **P0-03 — Add a task watchdog and recovery policy.**
+- [x] **P0-03 — Add a task watchdog and recovery policy.**
   - Evidence: no `esp_task_wdt` / `configASSERT` anywhere in `src/` or `include/`.
   - Problem: a stuck task (NVS, MQTT, Modbus) leaves the node mute forever.
   - Change: initialize TWDT, subscribe `mainPollingTask` and `tareaRed`, feed in
@@ -220,7 +220,7 @@
   - Change: delete or expose a documented API to change the interval.
   - Accept: no unused global.
 
-- [ ] **P2-07 — Document/measure stack usage.**
+- [x] **P2-07 — Document/measure stack usage.**
   - Evidence: stacks 8192/12288 (`src/main.cpp:451-452`).
   - Change: log `uxTaskGetStackHighWaterMark` in a debug build; record values
     here.
@@ -288,6 +288,16 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P0-03 + P2-07 (`fix: add task watchdog and stack diagnostics`)
+
+- `MainPoll` y `NetTask` suscritas al TWDT de 5 s; se alimentan por bloque Modbus, en la espera troceada de 30 s y alrededor de las llamadas MQTT.
+- `network_timeout_ms` reducido a 2000 ms para acotar bloqueos por debajo del TWDT.
+- Log de `Reset reason` al arrancar y stack high-water cada 60 s.
+- Pruebas 10 min con bus desconectado y con broker caído: sin reinicios.
+- Cuelgue simulado: `task_wdt: Aborting` y reinicio por software (`rst:0xc`).
+- Stack medido: `MainPoll` 5956 bytes libres de 8192; `NetTask` 9064 bytes libres de 12288.
+- `firmware.bin` final: 943,225 bytes.
 
 ### 2026-11-04 — P0-06 + P1-07 (`fix: guarantee cycle-end NDATA and node health`)
 
