@@ -101,6 +101,7 @@ Both application tasks are subscribed to the framework TWDT (5 s, panic).
 | `bdSeq` + NVS | `tareaRed` (`prepareDeath` + persist after NBIRTH) | One NVS write per successful session |
 | WiFi/MQTT state flags | event/callback tasks write, `tareaRed` reads | `std::atomic` |
 | `queueMqtt` | producer `MainPoll`, consumer `NetTask` | 16 frames (`2 * kMaxDevices`); on overflow, normal frames are dropped and `cycleEnd` evicts the oldest |
+| Device birth state (`deviceBirthDone`, `deviceOnline`) | `tareaRed` only | Per-device; reset on new session/rebirth |
 | Actuators | none | Telemetry only; no control loop |
 
 ### Data flow
@@ -113,7 +114,8 @@ Both application tasks are subscribed to the framework TWDT (5 s, panic).
    sends it to `queueMqtt` without blocking. If full, normal frames are dropped;
    a `cycleEnd` frame evicts the oldest frame.
 4. `tareaRed` drives WiFi/MQTT reconnection with backoff, waits for NTP before
-   connecting, subscribes NCMD, publishes NBIRTH + DBIRTH, then consumes frames.
+   connecting, subscribes NCMD, publishes NBIRTH once, then publishes each
+   DBIRTH independently (failed DBIRTHs retry every 2 s without a new NBIRTH).
 5. Per frame: DDEATH after `SPB_DEVICE_DEATH_CYCLES`, DBIRTH on recovery, DDATA
    when online, NDATA on `cycleEnd`.
 6. NCMD `Node Control/Rebirth` is decoded in the MQTT task, debounced, and sets
@@ -193,6 +195,9 @@ Rules enforced by the code:
   (`time(nullptr) > 1700000000`).
 - MQTT CONNECT is gated on `spb::timeReady()`, so the LWT/NDEATH is always built
   with a valid timestamp. Without NTP the node logs the wait and never connects.
+- NBIRTH is published once per MQTT session. Each DBIRTH is tracked per device;
+  a failed DBIRTH is retried without re-sending NBIRTH. Rebirth and reconnect
+  reset all device birth state.
 - Node health (`Modbus_ScanOK`) starts as `false` until the first polling cycle
   completes; `g_lastCycleOk` is written by `mainPollingTask` and read by `tareaRed`.
 - `SPB_MAX_METRICS = 24` **must** match `tools/sparkplug/sparkplug_b.options`.
@@ -254,7 +259,6 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 - Both tasks are subscribed to the 5 s TWDT; stack high-water is logged every
   60 s (`STACK_LOG_INTERVAL_MS`).
 - DE/RE pin is not configured; GPIO12 strapping must be verified.
-- Birth retry is all-or-nothing (a failed DBIRTH retries the whole NBIRTH).
 - Documentation drift: `TUTORIAL_MODBUS.md` and `SensorRegistry.h` still mention
   the old LoRa/JSON design.
 

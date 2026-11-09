@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-07/P2-07/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P2-07/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 943,757 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 944,029 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -108,7 +108,7 @@
     `requestPollNow()` that calls `xTaskNotifyGive`.
   - Accept: no dead code; behavior unchanged if removed.
 
-- [ ] **P1-03 — Make birth retry per-device, not all-or-nothing.**
+- [x] **P1-03 — Make birth retry per-device, not all-or-nothing.**
   - Evidence: `src/SparkplugB.cpp:439-445` (returns false if any DBIRTH fails),
     `src/main.cpp:272-280` (retries the whole birth).
   - Problem: a single failed DBIRTH forces a new NBIRTH with the same `bdSeq`,
@@ -288,6 +288,15 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P1-03 (`fix: retry device births per device`)
+
+- NBIRTH se publica una sola vez por sesión; cada DBIRTH se publica y rastrea por dispositivo.
+- Si un DBIRTH falla, se reintenta solo ese DBIRTH cada 2 s, sin reenviar NBIRTH.
+- Los demás devices y el NDATA siguen funcionando aunque falte un DBIRTH.
+- Rebirth y reconexión resetean el estado de birth por device y reenvían NBIRTH + DBIRTHs.
+- Probado: operación normal, fallo forzado de DBIRTH, desconexión MQTT y desconexión de bus; sin regresiones.
+- `firmware.bin` final: 944,029 bytes.
 
 ### 2026-11-04 — P0-02 + P2-10 (`fix: require NTP before MQTT connect`)
 

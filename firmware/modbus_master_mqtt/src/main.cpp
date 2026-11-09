@@ -296,42 +296,86 @@ static void mqtt_setup() {
 }
 
 static bool publishBirthIfReady(const MeasureFrame* lastFrames,
-                                const bool* hasLast) {
-    if (!g_mqttReady || !g_needBirth || g_birthDone) return false;
+                                const bool* hasLast,
+                                bool* deviceBirthDone,
+                                bool* deviceOnline) {
+    if (!g_mqttReady) return false;
 
-    // Suscribir NCMD antes del NBIRTH. No publicar birth hasta tener SUBACK.
-    if (!g_ncmdSubscribed) {
-        if (g_subscribeSentAt == 0 || (millis() - g_subscribeSentAt) >= 2000) {
-            g_subscribeSentAt = millis();
-            (void)esp_task_wdt_reset();
-            mqttClient.subscribe(spb::ncmdTopic(), 1);
-            (void)esp_task_wdt_reset();
-            LOG_I("Sparkplug: suscribiendo NCMD...");
+    static uint32_t lastDbirthAttemptMs = 0;
+
+    if (!g_birthDone) {
+        if (!g_needBirth) return false;
+
+        // Suscribir NCMD antes del NBIRTH. No publicar birth hasta tener SUBACK.
+        if (!g_ncmdSubscribed) {
+            if (g_subscribeSentAt == 0 || (millis() - g_subscribeSentAt) >= 2000) {
+                g_subscribeSentAt = millis();
+                (void)esp_task_wdt_reset();
+                mqttClient.subscribe(spb::ncmdTopic(), 1);
+                (void)esp_task_wdt_reset();
+                LOG_I("Sparkplug: suscribiendo NCMD...");
+            }
+            return false;
         }
-        return false;
-    }
 
-    // Sparkplug exige timestamps UTC en todos los birth/data. No publicar sin NTP.
-    if (!spb::timeReady()) {
-        static uint32_t lastLog = 0;
-        if (lastLog == 0 || (millis() - lastLog) > 10000) {
-            lastLog = millis();
-            LOG_W("Sparkplug: esperando NTP para publicar birth...");
+        // Sparkplug exige timestamps UTC en todos los birth/data. No publicar sin NTP.
+        if (!spb::timeReady()) {
+            static uint32_t lastLog = 0;
+            if (lastLog == 0 || (millis() - lastLog) > 10000) {
+                lastLog = millis();
+                LOG_W("Sparkplug: esperando NTP para publicar birth...");
+            }
+            return false;
         }
-        return false;
-    }
 
-    spb::NodeHealth health = makeHealth(g_lastCycleOk);
+        for (uint8_t d = 0; d < kDeviceCount; ++d) {
+            deviceBirthDone[d] = false;
+            deviceOnline[d] = false;
+        }
 
-    if (spb::publishBirth(mqttClient, health, lastFrames, hasLast)) {
+        spb::NodeHealth health = makeHealth(g_lastCycleOk);
+        if (!spb::publishNodeBirth(mqttClient, health)) {
+            LOG_W("Sparkplug: fallo al publicar NBIRTH; se reintenta");
+            return false;
+        }
+
         g_birthDone = true;
         g_needBirth = false;
-        LOG_I("Sparkplug: NBIRTH + DBIRTH publicados");
-        return true;
+        lastDbirthAttemptMs = 0;
+        LOG_I("Sparkplug: NBIRTH publicado");
     }
 
-    LOG_W("Sparkplug: fallo al publicar birth; se reintenta");
-    return false;
+    // Reintentar solo los DBIRTH que falten, con backoff de 2 s.
+    bool missing = false;
+    for (uint8_t d = 0; d < kDeviceCount; ++d) {
+        if (!deviceBirthDone[d]) {
+            missing = true;
+            break;
+        }
+    }
+    if (!missing) return true;
+
+    if (lastDbirthAttemptMs != 0 &&
+        (uint32_t)(millis() - lastDbirthAttemptMs) < 2000) {
+        return true;
+    }
+    lastDbirthAttemptMs = millis();
+
+    for (uint8_t d = 0; d < kDeviceCount; ++d) {
+        if (deviceBirthDone[d]) continue;
+
+        const MeasureFrame* frame =
+            (lastFrames != nullptr && hasLast != nullptr && hasLast[d]) ? &lastFrames[d] : nullptr;
+        if (spb::publishDeviceBirth(mqttClient, d, frame)) {
+            deviceBirthDone[d] = true;
+            deviceOnline[d] = true;
+            LOG_I("Sparkplug: %s DBIRTH", kDevices[d].deviceId);
+        } else {
+            LOG_W("Sparkplug: fallo DBIRTH de %s; se reintenta", kDevices[d].deviceId);
+        }
+    }
+
+    return true;
 }
 
 void tareaRed(void *pvParameters) {
@@ -339,7 +383,8 @@ void tareaRed(void *pvParameters) {
 
     MeasureFrame lastFrames[kMaxDevices] = {};
     bool         hasLast[kMaxDevices]    = {};
-    bool         deviceOnline[kMaxDevices] = {};
+    bool         deviceOnline[kMaxDevices]  = {};
+    bool         deviceBirthDone[kMaxDevices] = {};
 
     bool     prevWifi = false;
     bool     prevMqtt = false;
@@ -443,6 +488,10 @@ void tareaRed(void *pvParameters) {
             g_birthDone = false;
             g_needBirth = false;
             g_ncmdSubscribed = false;
+            for (uint8_t d = 0; d < kDeviceCount; ++d) {
+                deviceBirthDone[d] = false;
+                deviceOnline[d] = false;
+            }
         } else {
             if (g_birthDone && spb::rebirthPending()) {
                 spb::clearRebirth();
@@ -451,9 +500,8 @@ void tareaRed(void *pvParameters) {
                 LOG_I("Sparkplug: rebirth solicitado");
             }
 
-            if (publishBirthIfReady(lastFrames, hasLast)) {
-                for (uint8_t d = 0; d < kDeviceCount; ++d) deviceOnline[d] = true;
-            }
+            (void)publishBirthIfReady(lastFrames, hasLast,
+                                      deviceBirthDone, deviceOnline);
         }
 
         // --- Drenar cola ---
@@ -466,25 +514,34 @@ void tareaRed(void *pvParameters) {
 
             if (mqtt && g_birthDone && frame.deviceIndex < kDeviceCount) {
                 const uint8_t d = frame.deviceIndex;
-                const bool recovered = (frame.failStreak == 0);
 
-                if (deviceOnline[d] && frame.failStreak >= SPB_DEVICE_DEATH_CYCLES) {
-                    spb::publishDeviceDeath(mqttClient, d, frame.tsMs);
-                    deviceOnline[d] = false;
-                    LOG_W("Sparkplug: %s DDEATH (sin respuesta)", kDevices[d].deviceId);
-                } else if (!deviceOnline[d] && recovered) {
-                    if (spb::publishDeviceBirth(mqttClient, d, &frame)) {
-                        deviceOnline[d] = true;
-                        LOG_I("Sparkplug: %s DBIRTH (recuperado)", kDevices[d].deviceId);
+                if (!deviceBirthDone[d]) {
+                    // Aun sin DBIRTH: no publicar DDATA/DDEATH de este device.
+                    // Pero no perder el NDATA del ciclo.
+                    if (frame.cycleEnd) {
+                        spb::publishNodeData(mqttClient, makeHealth(frame.cycleOk), frame.tsMs);
                     }
-                }
+                } else {
+                    const bool recovered = (frame.failStreak == 0);
 
-                if (deviceOnline[d]) {
-                    const bool scanOk = frame.cycleEnd ? frame.cycleOk : true;
-                    spb::publishData(mqttClient, frame, makeHealth(scanOk));
-                } else if (frame.cycleEnd) {
-                    // El ultimo Device del ciclo esta offline; aun asi publicar NDATA.
-                    spb::publishNodeData(mqttClient, makeHealth(frame.cycleOk), frame.tsMs);
+                    if (deviceOnline[d] && frame.failStreak >= SPB_DEVICE_DEATH_CYCLES) {
+                        spb::publishDeviceDeath(mqttClient, d, frame.tsMs);
+                        deviceOnline[d] = false;
+                        LOG_W("Sparkplug: %s DDEATH (sin respuesta)", kDevices[d].deviceId);
+                    } else if (!deviceOnline[d] && recovered) {
+                        if (spb::publishDeviceBirth(mqttClient, d, &frame)) {
+                            deviceOnline[d] = true;
+                            LOG_I("Sparkplug: %s DBIRTH (recuperado)", kDevices[d].deviceId);
+                        }
+                    }
+
+                    if (deviceOnline[d]) {
+                        const bool scanOk = frame.cycleEnd ? frame.cycleOk : true;
+                        spb::publishData(mqttClient, frame, makeHealth(scanOk));
+                    } else if (frame.cycleEnd) {
+                        // El ultimo Device del ciclo esta offline; aun asi publicar NDATA.
+                        spb::publishNodeData(mqttClient, makeHealth(frame.cycleOk), frame.tsMs);
+                    }
                 }
             }
         }

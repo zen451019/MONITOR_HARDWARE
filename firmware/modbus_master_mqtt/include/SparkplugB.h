@@ -36,11 +36,9 @@ const char* deathTopic();
 const uint8_t* deathPayload();
 size_t      deathPayloadLen();
 
-// Llamar tras CONNACK.
-bool publishBirth(MqttTransport& mqtt,
-                  const NodeHealth& health,
-                  const MeasureFrame* lastFrames,
-                  const bool* hasLast);
+// Llamar tras CONNACK: publica solo NBIRTH (una vez por sesion).
+bool publishNodeBirth(MqttTransport& mqtt,
+                      const NodeHealth& health);
 
 // DBIRTH individual (recuperacion de un Device).
 bool publishDeviceBirth(MqttTransport& mqtt,

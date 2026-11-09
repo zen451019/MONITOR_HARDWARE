@@ -432,8 +432,7 @@ size_t deathPayloadLen() {
     return g_deathLen;
 }
 
-bool publishBirth(MqttTransport& mqtt, const NodeHealth& health,
-                  const MeasureFrame* lastFrames, const bool* hasLast) {
+bool publishNodeBirth(MqttTransport& mqtt, const NodeHealth& health) {
     g_seq = 0;
     const uint64_t ts = nowMs();
     if (ts == 0) return false;
@@ -454,17 +453,7 @@ bool publishBirth(MqttTransport& mqtt, const NodeHealth& health,
     }
 
     persistBdSeq();
-
     g_seq = 1;
-
-    for (uint8_t d = 0; d < kDeviceCount; ++d) {
-        const MeasureFrame* frame =
-            (lastFrames != nullptr && hasLast != nullptr && hasLast[d]) ? &lastFrames[d] : nullptr;
-        if (!publishDeviceBirthInternal(mqtt, d, frame)) {
-            return false;
-        }
-    }
-
     return true;
 }
 
