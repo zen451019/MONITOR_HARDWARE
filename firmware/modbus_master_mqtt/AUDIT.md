@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P2-07/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P2-07/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 944,029 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 943,813 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -164,7 +164,7 @@
   - Change: delete it (or justify if it is needed for the board).
   - Accept: build + boot + Modbus unaffected.
 
-- [ ] **P1-11 — De-duplicate WiFi reconnection strategy.**
+- [x] **P1-11 — De-duplicate WiFi reconnection strategy.**
   - Evidence: `src/main.cpp:441` (`setAutoReconnect(true)`) and
     `src/main.cpp:316-319` (manual `begin()` every 10 s).
   - Change: pick one strategy; if manual, disable auto-reconnect and keep the
@@ -288,6 +288,13 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P1-11 (`fix: deduplicate WiFi reconnection strategy`)
+
+- La reconexión WiFi queda solo en `WiFi.setAutoReconnect(true)`; se eliminó el `WiFi.begin()` manual cada 10 s.
+- `tareaRed` usa `g_wifiReady` como fuente de estado.
+- Probado con un AP de prueba apagado/encendido varias veces: WiFi reconecta solo, sin `re-lanzando begin()`, MQTT reintenta con backoff y publica NBIRTH/DBIRTH al volver; sin reinicios por watchdog.
+- `firmware.bin` final: 943,813 bytes.
 
 ### 2026-11-04 — P1-03 (`fix: retry device births per device`)
 

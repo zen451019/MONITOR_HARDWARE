@@ -90,6 +90,10 @@ Both application tasks are subscribed to the framework TWDT (5 s, panic).
 `NetTask` feeds every loop and around MQTT API calls. MQTT
 `network_timeout_ms` is 2 s to stay below the TWDT.
 
+WiFi reconnection is owned only by the Arduino/ESP32 stack
+(`WiFi.setAutoReconnect(true)`); `tareaRed` observes `g_wifiReady` and never
+calls `WiFi.begin()` again.
+
 ### Resource ownership (do not violate)
 
 | Resource | Owner | Notes |

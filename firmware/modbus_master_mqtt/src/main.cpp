@@ -388,7 +388,6 @@ void tareaRed(void *pvParameters) {
 
     bool     prevWifi = false;
     bool     prevMqtt = false;
-    uint32_t wifiDiscSince = 0;
     uint32_t mqttDiscSince = 0;
     uint32_t mqttBackoff   = 2000;
 
@@ -402,7 +401,7 @@ void tareaRed(void *pvParameters) {
     while (true) {
         (void)esp_task_wdt_reset();
 
-        const bool wifi = (WiFi.status() == WL_CONNECTED);
+        const bool wifi = g_wifiReady;
         const bool mqtt = g_mqttReady;
 
         // --- WiFi: transiciones + reconexion suave ---
@@ -414,18 +413,9 @@ void tareaRed(void *pvParameters) {
         }
         prevWifi = wifi;
 
-        if (wifi) {
-            wifiDiscSince = 0;
-        } else {
+        if (!wifi) {
             mqttDiscSince = 0;
             mqttBackoff = 2000;
-            if (wifiDiscSince == 0) {
-                wifiDiscSince = millis();
-            } else if (millis() - wifiDiscSince > 10000) {
-                LOG_W("WiFi: 10 s sin conexion, re-lanzando begin()...");
-                WiFi.begin(WIFI_SSID, WIFI_PASS);
-                wifiDiscSince = millis();
-            }
         }
 
         // --- MQTT: transiciones + reconexion con backoff ---
@@ -587,7 +577,7 @@ void setup() {
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(g_clientId);
     WiFi.persistent(false);
-    WiFi.setAutoReconnect(true);
+    WiFi.setAutoReconnect(true);   // Unica estrategia de reconexion WiFi
     WiFi.onEvent(wifi_event, ARDUINO_EVENT_WIFI_STA_GOT_IP);
     WiFi.onEvent(wifi_event, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
