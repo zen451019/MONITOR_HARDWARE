@@ -296,6 +296,7 @@
 - Se agregó `include/netconfig.example.h` con placeholders, sin credenciales ni IPs reales.
 - `AGENTS.md` documenta copiar el ejemplo, la postura TCP/anónimo solo para LAN de confianza y TLS fuera de ella.
 - `netconfig.h` sigue gitignored; el ejemplo no.
+- Se reemplazó la IP real del broker en `GUIA_SPARKPLUG.md` por un placeholder.
 - No hay cambios de firmware; `firmware.bin` = 941,689 bytes.
 
 ### 2026-11-04 — P1-05 (`fix: use QoS 1 for birth messages`)

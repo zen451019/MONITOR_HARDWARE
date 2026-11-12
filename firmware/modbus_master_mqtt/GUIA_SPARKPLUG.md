@@ -25,7 +25,7 @@ El monitor serie muestra el arranque, la conexion WiFi/MQTT, el `bdSeq`, el birt
 
 El script Python y MQTT Explorer corren en la misma PC que Mosquitto, por eso usan
 `127.0.0.1`. El ESP32 **no** puede usar `127.0.0.1`: en `include/netconfig.h`,
-`MQTT_HOST` debe ser la IP LAN de la PC (por ejemplo `192.168.18.27`).
+`MQTT_HOST` debe ser la IP LAN de la PC (por ejemplo `192.168.1.10`).
 
 Con el broker y la configuracion actual:
 
