@@ -18,21 +18,21 @@ static ModbusApiError map_error(Error e, uint8_t& exception_code) {
             return ModbusApiError::ERROR_TIMEOUT;
         case CRC_ERROR:
             return ModbusApiError::ERROR_CRC;
-        case ILLEGAL_FUNCTION:
-        case ILLEGAL_DATA_ADDRESS:
-        case ILLEGAL_DATA_VALUE:
-        case SERVER_DEVICE_FAILURE:
-        case ACKNOWLEDGE:
-        case SERVER_DEVICE_BUSY:
-        case NEGATIVE_ACKNOWLEDGE:
-        case MEMORY_PARITY_ERROR:
-        case GATEWAY_PATH_UNAVAIL:
-        case GATEWAY_TARGET_NO_RESP:
-            exception_code = static_cast<uint8_t>(e);
-            return ModbusApiError::ERROR_EXCEPTION;
         default:
-            return ModbusApiError::ERROR_BUS;
+            break;
     }
+
+    // eModbus getError() devuelve MM_data[2] (codigo de excepcion crudo) cuando
+    // la respuesta tiene el bit 0x80 en el function code. Los valores 0x01..0x0B
+    // del enum Error coinciden con los codigos de excepcion Modbus.
+    const uint8_t code = static_cast<uint8_t>(e);
+    if (code >= static_cast<uint8_t>(ILLEGAL_FUNCTION) &&
+        code <= static_cast<uint8_t>(GATEWAY_TARGET_NO_RESP)) {
+        exception_code = code;
+        return ModbusApiError::ERROR_EXCEPTION;
+    }
+
+    return ModbusApiError::ERROR_BUS;
 }
 
 void modbus_api_init(HardwareSerial& uart_port, int rx_pin, int tx_pin,

@@ -26,7 +26,7 @@ struct ModbusApiResult {
     uint8_t  data[MODBUS_API_MAX_DATA_SIZE];            // Bytes de payload (registros).
     size_t   data_len;                                  // Bytes validos en 'data'.
     uint8_t  slave_id;                                  // ID del esclavo que respondio.
-    uint8_t  exception_code;                            // Codigo de excepcion Modbus (si aplica).
+    uint8_t  exception_code;                            // Codigo de excepcion Modbus 0x01..0x0B (solo ERROR_EXCEPTION).
 };
 
 /**

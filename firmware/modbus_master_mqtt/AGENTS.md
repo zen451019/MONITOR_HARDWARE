@@ -167,6 +167,10 @@ Decode helpers: `mb_u16`, `mb_i32`, `mb_byte` (`include/ModbusConfig.h:32-50`).
 The meter sends **pure little-endian** (low byte / low word first). Bounds
 guards return 0 instead of reading out of range.
 
+Modbus exception responses are reported with `err=3` (`ERROR_EXCEPTION`) and
+`exception_code` set to the raw Modbus code (0x01..0x0B). eModbus `getError()`
+already strips the 0x80 bit from the function code.
+
 Current device: `medidor_trifasico_1`, slave `1`, alias base `10`, 4 blocks,
 17 Sparkplug metrics.
 

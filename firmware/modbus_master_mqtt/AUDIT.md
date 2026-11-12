@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P2-07/P2-08/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P1-12/P2-07/P2-08/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 941,777 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 941,761 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -171,7 +171,7 @@
     backoff.
   - Accept: reconnect behavior is predictable and logged once.
 
-- [ ] **P1-12 — Verify `exception_code` mapping.**
+- [x] **P1-12 — Verify `exception_code` mapping.**
   - Evidence: `src/ModbusAPI.cpp:31`
     (`exception_code = static_cast<uint8_t>(e)`).
   - Change: check the eModbus `Error` enum values against the Modbus exception
@@ -288,6 +288,14 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P1-12 (`fix: map Modbus exception codes explicitly`)
+
+- Se verificó que eModbus `getError()` devuelve el código de excepción crudo (0x01..0x0B), sin el bit 0x80.
+- `map_error()` ahora clasifica por rango cualquier código 0x01..0x0B como `ERROR_EXCEPTION`, preservando códigos no enumerados.
+- Prueba con dirección ilegal (`0xFFFF`): `err=3 exc=0x02` (`ERROR_EXCEPTION`, `ILLEGAL_DATA_ADDRESS`).
+- Timeout sigue como `err=1 exc=0x00`; operación normal sin regresiones.
+- `firmware.bin` final: 941,761 bytes.
 
 ### 2026-11-04 — P2-08 (`fix: serialize logging across cores`)
 
