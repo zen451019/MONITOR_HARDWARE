@@ -75,6 +75,9 @@ Native host tests cover the Modbus decode helpers. On this machine the host
 `gcc`/`g++` live in `C:\msys64\mingw64\bin`; add that folder to `PATH` if the
 test command cannot find them. There is no CI.
 
+First-time setup: copy `include/netconfig.example.h` to `include/netconfig.h`
+and fill in the local WiFi/MQTT values. `netconfig.h` is gitignored.
+
 ---
 
 ## 4. Architecture and task ownership
@@ -224,9 +227,12 @@ Rules enforced by the code:
 - `SPB_MAX_METRICS = 24` **must** match `tools/sparkplug/sparkplug_b.options`.
 - `SPB_MAX_PAYLOAD_BYTES = 1536`; MQTT buffers are 2048.
 
-Identity is in `include/netconfig.h` (local, gitignored):
-group `EMASA`, edge node `nemo_medidor1`, LAN broker, MQTT anonymous,
-**no TLS**. Never commit real credentials or the local broker address.
+Identity is in `include/netconfig.h` (local, gitignored; copy it from
+`include/netconfig.example.h`). The LAN profile is MQTT anonymous, plain TCP
+1883, **no TLS**, which is acceptable only on a trusted LAN. Outside it, use
+MQTT over TLS (typically 8883) with credentials and ACLs. `MqttTransport`
+supports TLS via `TlsConfig`, but `mqtt_setup()` does not wire it yet. Never
+commit real credentials or the local broker address.
 
 ---
 
@@ -273,6 +279,7 @@ After changing any of the above, update this file if the invariants changed.
 
 See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 
+- MQTT is plain TCP 1883, anonymous, no TLS; only acceptable on a trusted LAN.
 - NBIRTH requires valid UTC time. On an isolated LAN, set `SPB_NTP1`/`SPB_NTP2`
   in `netconfig.h` to a local NTP server (UDP 123); without NTP the node does
   not connect or publish.

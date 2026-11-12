@@ -1,7 +1,7 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-05/P1-07/P1-11/P1-12/P2-01/P2-04/P2-07/P2-08/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-05/P1-06/P1-07/P1-11/P1-12/P2-01/P2-04/P2-07/P2-08/P2-09/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
 > **Baseline:** `firmware.bin` = 941,689 bytes (default partition, fits).
@@ -135,7 +135,7 @@
     document the choice; keep DATA at QoS 0 if bandwidth matters.
   - Accept: decoder shows expected QoS for each message type.
 
-- [ ] **P1-06 — Security posture for MQTT.**
+- [x] **P1-06 — Security posture for MQTT.**
   - Evidence: `src/MqttTransport.cpp:139-149` (plain TCP when `tls == nullptr`),
     `include/netconfig.h:12-15` (anonymous, no TLS).
   - Change: document that TLS is required outside a trusted LAN; add a
@@ -233,7 +233,7 @@
   - Change: optional mutex around `LOG_PRINT` or a small log queue.
   - Accept: no interleaved lines under load.
 
-- [ ] **P2-09 — Add `netconfig.example.h`.**
+- [x] **P2-09 — Add `netconfig.example.h`.**
   - Evidence: `include/netconfig.h` is gitignored (`.gitignore:25` at repo root).
   - Change: commit an example with placeholders and document the setup step.
   - Accept: a fresh clone knows what to create; no secrets committed.
@@ -290,6 +290,13 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P1-06 + P2-09 (`docs: add netconfig example and document MQTT security`)
+
+- Se agregó `include/netconfig.example.h` con placeholders, sin credenciales ni IPs reales.
+- `AGENTS.md` documenta copiar el ejemplo, la postura TCP/anónimo solo para LAN de confianza y TLS fuera de ella.
+- `netconfig.h` sigue gitignored; el ejemplo no.
+- No hay cambios de firmware; `firmware.bin` = 941,689 bytes.
 
 ### 2026-11-04 — P1-05 (`fix: use QoS 1 for birth messages`)
 
