@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "ModbusDecode.h"
+
 // =================================================================================================
 // Timing
 // =================================================================================================
@@ -40,29 +42,6 @@ const ModbusBusConfig kBusCfg = {
     -1               // deRePin (auto-direccion)
 };
 
-// =================================================================================================
-// Decode helpers - el dispositivo manda little-endian (byte bajo primero)
-// =================================================================================================
-// reg = offset en registros dentro del bloque.
-
-static inline uint16_t mb_u16(const uint8_t* d, size_t len, uint16_t reg) {
-    size_t o = (size_t)reg * 2;
-    if (o + 1 >= len) return 0;
-    return (uint16_t)(d[o] | (d[o + 1] << 8));
-}
-
-// int32 a partir del registro 'reg' (palabra baja primero, little-endian).
-static inline int32_t mb_i32(const uint8_t* d, size_t len, uint16_t reg) {
-    size_t o = (size_t)reg * 2;
-    if (o + 3 >= len) return 0;
-    uint32_t u = (uint32_t)d[o] | ((uint32_t)d[o + 1] << 8) |
-                 ((uint32_t)d[o + 2] << 16) | ((uint32_t)d[o + 3] << 24);
-    return (int32_t)u;
-}
-
-// Byte crudo en la posicion 'i' del buffer.
-static inline uint8_t mb_byte(const uint8_t* d, size_t len, uint16_t i) {
-    return (i < len) ? d[i] : (uint8_t)0;
-}
+// Decode helpers live in ModbusDecode.h (pure C++ for host tests).
 
 #endif // MODBUS_CONFIG_H

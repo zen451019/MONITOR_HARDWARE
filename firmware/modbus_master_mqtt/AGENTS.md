@@ -64,13 +64,16 @@ $pio = "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe"
 & $pio run -t upload       # flash
 & $pio device monitor      # serial monitor
 & $pio run -t clean        # clean
+& $pio test -e native      # host tests (Unity)
 ```
 
 `Serial.begin(115200)` and `monitor_speed = 115200` are aligned. The build uses
 `-Wall -Wextra` on project sources (`build_src_flags`) and
 `monitor_filters = esp32_exception_decoder, time`.
 
-There is no test suite and no CI. See `AUDIT.md` for proposed verification work.
+Native host tests cover the Modbus decode helpers. On this machine the host
+`gcc`/`g++` live in `C:\msys64\mingw64\bin`; add that folder to `PATH` if the
+test command cannot find them. There is no CI.
 
 ---
 
@@ -163,9 +166,9 @@ Bus parameters (`include/ModbusConfig.h`):
 Worst-case scan: one 4-block device = 4\*500 + 3\*10 = **~2.03 s**;
 8 devices = **~16.3 s**, still below `POLL_INTERVAL_MS`.
 
-Decode helpers: `mb_u16`, `mb_i32`, `mb_byte` (`include/ModbusConfig.h:32-50`).
-The meter sends **pure little-endian** (low byte / low word first). Bounds
-guards return 0 instead of reading out of range.
+Decode helpers: `mb_u16`, `mb_i32`, `mb_byte` (`include/ModbusDecode.h`, pure
+C++ and host-tested). The meter sends **pure little-endian** (low byte / low
+word first). Bounds guards return 0 instead of reading out of range.
 
 Modbus exception responses are reported with `err=3` (`ERROR_EXCEPTION`) and
 `exception_code` set to the raw Modbus code (0x01..0x0B). eModbus `getError()`
@@ -294,6 +297,7 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 ## 11. Verification before finishing a change
 
 - Build with the full `pio.exe` path; fix warnings you introduce.
+- Run `& $pio test -e native` after changing `include/ModbusDecode.h` or its tests.
 - If you touch Sparkplug payloads, run the decoder/validator:
   `python tools/sparkplug/sparkplug_decode.py --host <broker>`.
 - Check that a new metric has a unique alias and a matching `SpbMetricDef`.

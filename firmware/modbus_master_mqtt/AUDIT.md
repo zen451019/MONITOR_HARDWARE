@@ -1,7 +1,7 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P1-12/P2-04/P2-07/P2-08/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P1-12/P2-01/P2-04/P2-07/P2-08/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
 > **Baseline:** `firmware.bin` = 941,677 bytes (default partition, fits).
@@ -182,7 +182,7 @@
 
 ### P2 — Quality, tooling, documentation
 
-- [ ] **P2-01 — Add host-side tests for decode helpers.**
+- [x] **P2-01 — Add host-side tests for decode helpers.**
   - Evidence: `include/ModbusConfig.h:32-50`; no tests in the repo.
   - Change: PlatformIO `[env:native]` + Unity tests for `mb_u16`, `mb_i32`,
     `mb_byte` (bounds, endianness, sign).
@@ -290,6 +290,14 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P2-01 (`test: add native tests for Modbus decode helpers`)
+
+- Extraídos `mb_u16`, `mb_i32`, `mb_byte` a `include/ModbusDecode.h` (C++ puro).
+- `[env:native]` con Unity; `default_envs` evita compilar native en `pio run`.
+- 10 tests: endianness, offset, signo, `INT32_MIN`/`INT32_MAX` y bounds de u16/i32/byte.
+- `pio test -e native`: 10/10 PASSED.
+- `pio run`: firmware sin cambios, 941,677 bytes.
 
 ### 2026-11-04 — P2-04 (`fix: guard node metric builders against overflow`)
 
