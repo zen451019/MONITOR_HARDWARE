@@ -13,15 +13,14 @@
 #define LOG_LEVEL 3
 #endif
 
+// Serialized logger. logPrintf() formats one line and writes it with a single
+// Serial.write() under a mutex, so lines from different tasks cannot interleave.
+void logInit();
+void logPrintf(const char* level, const char* fmt, ...);
+
 // Internal: print only if the message level is <= LOG_LEVEL.
 #define LOG_PRINT(level_tag, fmt, ...) \
-    do { \
-        Serial.print("["); \
-        Serial.print(level_tag); \
-        Serial.print("] "); \
-        Serial.printf(fmt, ##__VA_ARGS__); \
-        Serial.println(); \
-    } while (0)
+    logPrintf(level_tag, fmt, ##__VA_ARGS__)
 
 #if LOG_LEVEL >= 1
 #define LOG_E(fmt, ...) LOG_PRINT("E", fmt, ##__VA_ARGS__)

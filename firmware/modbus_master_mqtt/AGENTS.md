@@ -106,6 +106,7 @@ calls `WiFi.begin()` again.
 | WiFi/MQTT state flags | event/callback tasks write, `tareaRed` reads | `std::atomic` |
 | `queueMqtt` | producer `MainPoll`, consumer `NetTask` | 16 frames (`2 * kMaxDevices`); on overflow, normal frames are dropped and `cycleEnd` evicts the oldest |
 | Device birth state (`deviceBirthDone`, `deviceOnline`) | `tareaRed` only | Per-device; reset on new session/rebirth |
+| Serial log (`logPrintf`) | any task | Serialized by mutex; not ISR-safe |
 | Actuators | none | Telemetry only; no control loop |
 
 ### Data flow
@@ -237,8 +238,9 @@ After changing any of the above, update this file if the invariants changed.
 
 - C++11/Arduino style, 4-space indentation, `camelCase` functions,
   `PascalCase` types, `g_` prefix for globals, `k` prefix for constants.
-- Logging: use `LOG_E/W/I/D` from `include/Log.h` (`LOG_LEVEL` 0..4). Do not add
-  raw `Serial.printf` in new code.
+- Logging: use `LOG_E/W/I/D` from `include/Log.h` (`LOG_LEVEL` 0..4). `logPrintf()`
+  serializes complete lines across tasks with a mutex and one `Serial.write()`.
+  Do not add raw `Serial.printf` for logs, and never log from an ISR.
 - User-facing documentation and code comments are mostly **Spanish**; this
   context file and `AUDIT.md` are **English** for agent efficiency.
 - Configuration is declarative in headers; avoid hardcoding pins/addresses in

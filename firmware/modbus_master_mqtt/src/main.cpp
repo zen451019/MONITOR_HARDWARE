@@ -550,11 +550,12 @@ void tareaRed(void *pvParameters) {
 
 void setup() {
     Serial.begin(115200);
+    logInit();
     {
         const uint32_t t0 = millis();
         while (!Serial && (millis() - t0) < 3000) { delay(10); }
     }
-    Serial.println("Iniciando modbus_master_mqtt (Sparkplug B)...");
+    LOG_I("Iniciando modbus_master_mqtt (Sparkplug B)...");
     LOG_I("Reset reason: %d", (int)esp_reset_reason());
 
     modbus_api_init(Serial2, kBusCfg.rxPin, kBusCfg.txPin,
@@ -598,9 +599,9 @@ void setup() {
         esp_restart();
     }
 
-    Serial.printf("Configurado: bus %lu baud, %u devices, timeout %lu ms, intervalo %lu ms\n",
-                  kBusCfg.baudRate, (unsigned)kDeviceCount,
-                  (unsigned long)kBusCfg.defaultTimeoutMs, (unsigned long)POLL_INTERVAL_MS);
+    LOG_I("Configurado: bus %lu baud, %u devices, timeout %lu ms, intervalo %lu ms",
+          kBusCfg.baudRate, (unsigned)kDeviceCount,
+          (unsigned long)kBusCfg.defaultTimeoutMs, (unsigned long)POLL_INTERVAL_MS);
 }
 
 void loop() {

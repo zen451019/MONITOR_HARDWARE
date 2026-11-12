@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P2-07/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P2-07/P2-08/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 943,813 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 941,777 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -226,7 +226,7 @@
     here.
   - Accept: measured headroom documented; adjust stacks if needed.
 
-- [ ] **P2-08 — Serialize logging across cores.**
+- [x] **P2-08 — Serialize logging across cores.**
   - Evidence: `include/Log.h:17-24` writes to `Serial` from both cores.
   - Change: optional mutex around `LOG_PRINT` or a small log queue.
   - Accept: no interleaved lines under load.
@@ -288,6 +288,14 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P2-08 (`fix: serialize logging across cores`)
+
+- `logPrintf()` formatea la línea completa en un buffer local y la escribe con un solo `Serial.write()` bajo mutex.
+- Timeout de 100 ms: si no se consigue el mutex, se descarta la línea en vez de bloquear la tarea.
+- `logInit()` se llama antes del primer log; los `Serial.println/printf` de `setup()` pasaron a `LOG_I`.
+- Probado con bus desconectado y MQTT inalcanzable durante varios minutos: sin líneas intercaladas, sin reinicios ni Guru Meditation; stack estable.
+- `firmware.bin` final: 941,777 bytes.
 
 ### 2026-11-04 — P1-11 (`fix: deduplicate WiFi reconnection strategy`)
 
