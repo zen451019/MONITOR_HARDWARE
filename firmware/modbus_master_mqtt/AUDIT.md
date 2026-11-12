@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P1-12/P2-07/P2-08/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P1-12/P2-04/P2-07/P2-08/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 941,761 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 941,677 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -203,7 +203,7 @@
     clarify that `SensorRegistry` IDs are only logical IDs in this firmware.
   - Accept: docs match code names; no stale JSON references.
 
-- [ ] **P2-04 — Guard node-metric builders against overflow.**
+- [x] **P2-04 — Guard node-metric builders against overflow.**
   - Evidence: `src/SparkplugB.cpp:158-218` (`addBdSeqMetric`,
     `addRebirthMetric`, `addNodeHealthMetrics` do not check
     `metrics_count < SPB_MAX_METRICS`).
@@ -290,6 +290,14 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P2-04 (`fix: guard node metric builders against overflow`)
+
+- Se agregó `nextMetric()` con chequeo de `SPB_MAX_METRICS` y log de overflow.
+- `addBdSeqMetric`, `addRebirthMetric` y `addNodeHealthMetrics` ahora usan el helper.
+- `static_assert` para el peor caso de NBIRTH (6 métricas de nodo).
+- Probado en operación normal: NBIRTH/NDATA/DDATA sin cambios, sin overflow ni reinicios.
+- `firmware.bin` final: 941,677 bytes.
 
 ### 2026-11-04 — P1-12 (`fix: map Modbus exception codes explicitly`)
 

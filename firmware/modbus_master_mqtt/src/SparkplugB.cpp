@@ -159,65 +159,83 @@ bool publishPayload(MqttTransport& mqtt, const char* topic, uint8_t qos,
     return true;
 }
 
+constexpr size_t kNodeBirthMetricCount = 2 + 4; // bdSeq + rebirth + 4 health
+static_assert(kNodeBirthMetricCount <= SPB_MAX_METRICS,
+              "NBIRTH metrics exceed SPB_MAX_METRICS");
+
+Metric* nextMetric(Payload& p) {
+    if (p.metrics_count >= SPB_MAX_METRICS) {
+        LOG_E("Sparkplug: metric overflow (max %zu)", SPB_MAX_METRICS);
+        return nullptr;
+    }
+    return &p.metrics[p.metrics_count++];
+}
+
 void addBdSeqMetric(Payload& p, uint8_t bdSeq, uint64_t ts, bool withAlias) {
-    Metric& m = p.metrics[p.metrics_count++];
-    metricSetName(m, SPB_METRIC_BDSEQ);
-    if (withAlias) metricSetAlias(m, SPB_ALIAS_NODE_BDSEQ);
-    metricSetDatatype(m, SPB_DT_INT64);
-    metricSetTimestamp(m, ts);
-    metricSetInt64(m, (int64_t)bdSeq);
+    Metric* m = nextMetric(p);
+    if (m == nullptr) return;
+    metricSetName(*m, SPB_METRIC_BDSEQ);
+    if (withAlias) metricSetAlias(*m, SPB_ALIAS_NODE_BDSEQ);
+    metricSetDatatype(*m, SPB_DT_INT64);
+    metricSetTimestamp(*m, ts);
+    metricSetInt64(*m, (int64_t)bdSeq);
 }
 
 void addRebirthMetric(Payload& p, uint64_t ts) {
-    Metric& m = p.metrics[p.metrics_count++];
-    metricSetName(m, SPB_METRIC_REBIRTH);
-    metricSetAlias(m, SPB_ALIAS_NODE_REBIRTH);
-    metricSetDatatype(m, SPB_DT_BOOLEAN);
-    metricSetTimestamp(m, ts);
-    metricSetBool(m, false);
+    Metric* m = nextMetric(p);
+    if (m == nullptr) return;
+    metricSetName(*m, SPB_METRIC_REBIRTH);
+    metricSetAlias(*m, SPB_ALIAS_NODE_REBIRTH);
+    metricSetDatatype(*m, SPB_DT_BOOLEAN);
+    metricSetTimestamp(*m, ts);
+    metricSetBool(*m, false);
 }
 
 void addNodeHealthMetrics(Payload& p, const spb::NodeHealth& h,
                           uint64_t ts, bool isBirth) {
     {
-        Metric& m = p.metrics[p.metrics_count++];
+        Metric* m = nextMetric(p);
+        if (m == nullptr) return;
         if (isBirth) {
-            metricSetName(m, SPB_METRIC_UPTIME);
-            metricSetDatatype(m, SPB_DT_UINT64);
+            metricSetName(*m, SPB_METRIC_UPTIME);
+            metricSetDatatype(*m, SPB_DT_UINT64);
         }
-        metricSetAlias(m, SPB_ALIAS_NODE_UPTIME);
-        metricSetTimestamp(m, ts);
-        metricSetUInt64(m, h.uptimeMs);
+        metricSetAlias(*m, SPB_ALIAS_NODE_UPTIME);
+        metricSetTimestamp(*m, ts);
+        metricSetUInt64(*m, h.uptimeMs);
     }
     {
-        Metric& m = p.metrics[p.metrics_count++];
+        Metric* m = nextMetric(p);
+        if (m == nullptr) return;
         if (isBirth) {
-            metricSetName(m, SPB_METRIC_RSSI);
-            metricSetDatatype(m, SPB_DT_INT32);
+            metricSetName(*m, SPB_METRIC_RSSI);
+            metricSetDatatype(*m, SPB_DT_INT32);
         }
-        metricSetAlias(m, SPB_ALIAS_NODE_RSSI);
-        metricSetTimestamp(m, ts);
-        metricSetInt32(m, h.rssiDbm);
+        metricSetAlias(*m, SPB_ALIAS_NODE_RSSI);
+        metricSetTimestamp(*m, ts);
+        metricSetInt32(*m, h.rssiDbm);
     }
     {
-        Metric& m = p.metrics[p.metrics_count++];
+        Metric* m = nextMetric(p);
+        if (m == nullptr) return;
         if (isBirth) {
-            metricSetName(m, SPB_METRIC_FREE_HEAP);
-            metricSetDatatype(m, SPB_DT_UINT32);
+            metricSetName(*m, SPB_METRIC_FREE_HEAP);
+            metricSetDatatype(*m, SPB_DT_UINT32);
         }
-        metricSetAlias(m, SPB_ALIAS_NODE_FREE_HEAP);
-        metricSetTimestamp(m, ts);
-        metricSetUInt32(m, h.freeHeapBytes);
+        metricSetAlias(*m, SPB_ALIAS_NODE_FREE_HEAP);
+        metricSetTimestamp(*m, ts);
+        metricSetUInt32(*m, h.freeHeapBytes);
     }
     {
-        Metric& m = p.metrics[p.metrics_count++];
+        Metric* m = nextMetric(p);
+        if (m == nullptr) return;
         if (isBirth) {
-            metricSetName(m, SPB_METRIC_SCAN_OK);
-            metricSetDatatype(m, SPB_DT_BOOLEAN);
+            metricSetName(*m, SPB_METRIC_SCAN_OK);
+            metricSetDatatype(*m, SPB_DT_BOOLEAN);
         }
-        metricSetAlias(m, SPB_ALIAS_NODE_SCAN_OK);
-        metricSetTimestamp(m, ts);
-        metricSetBool(m, h.scanOk);
+        metricSetAlias(*m, SPB_ALIAS_NODE_SCAN_OK);
+        metricSetTimestamp(*m, ts);
+        metricSetBool(*m, h.scanOk);
     }
 }
 
