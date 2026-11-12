@@ -298,7 +298,8 @@ bool publishDeviceBirthInternal(MqttTransport& mqtt, uint8_t deviceIndex,
 
     fillDeviceMetrics(g_payload, dev, frame, ts, true);
 
-    if (!publishPayload(mqtt, g_topicDbirth[deviceIndex], 0, g_payload, "DBIRTH")) {
+    if (!publishPayload(mqtt, g_topicDbirth[deviceIndex], SPB_QOS_BIRTH,
+                        g_payload, "DBIRTH")) {
         return false;
     }
 
@@ -332,7 +333,7 @@ bool publishNodeDataInternal(MqttTransport& mqtt, const spb::NodeHealth& health,
 
     addNodeHealthMetrics(g_payload, health, ts, false);
 
-    if (!publishPayload(mqtt, g_topicNdata, 0, g_payload, "NDATA")) {
+    if (!publishPayload(mqtt, g_topicNdata, SPB_QOS_DATA, g_payload, "NDATA")) {
         return false;
     }
 
@@ -466,7 +467,7 @@ bool publishNodeBirth(MqttTransport& mqtt, const NodeHealth& health) {
     addRebirthMetric(g_payload, ts);
     addNodeHealthMetrics(g_payload, health, ts, true);
 
-    if (!publishPayload(mqtt, g_topicNbirth, 0, g_payload, "NBIRTH")) {
+    if (!publishPayload(mqtt, g_topicNbirth, SPB_QOS_BIRTH, g_payload, "NBIRTH")) {
         return false;
     }
 
@@ -496,7 +497,8 @@ bool publishData(MqttTransport& mqtt, const MeasureFrame& frame,
 
     fillDeviceMetrics(g_payload, dev, &frame, ts, false);
 
-    bool ok = publishPayload(mqtt, g_topicDdata[frame.deviceIndex], 0, g_payload, "DDATA");
+    bool ok = publishPayload(mqtt, g_topicDdata[frame.deviceIndex], SPB_QOS_DATA,
+                             g_payload, "DDATA");
     if (ok) {
         g_seq = (uint8_t)(g_seq + 1);
     }
@@ -527,7 +529,8 @@ bool publishDeviceDeath(MqttTransport& mqtt, uint8_t deviceIndex, uint64_t tsMs)
     g_payload.metrics_count = 0;
 
     LOG_I("Sparkplug: DDEATH %s", kDevices[deviceIndex].deviceId);
-    if (!publishPayload(mqtt, g_topicDdeath[deviceIndex], 0, g_payload, "DDEATH")) {
+    if (!publishPayload(mqtt, g_topicDdeath[deviceIndex], SPB_QOS_DDEATH,
+                        g_payload, "DDEATH")) {
         return false;
     }
 

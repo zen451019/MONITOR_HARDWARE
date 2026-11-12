@@ -1,10 +1,10 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-07/P1-11/P1-12/P2-01/P2-04/P2-07/P2-08/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-05/P1-07/P1-11/P1-12/P2-01/P2-04/P2-07/P2-08/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
-> **Baseline:** `firmware.bin` = 941,677 bytes (default partition, fits).
+> **Baseline:** `firmware.bin` = 941,689 bytes (default partition, fits).
 >
 > This file describes *what to change*. `AGENTS.md` describes *what is*.
 > When an item is implemented, tick it and add the commit/PR reference. Move the
@@ -128,7 +128,7 @@
   - Note 2026-11-04: transceiver confirmed auto-direction; `deRePin = -1` is now
     explicit in `ModbusBusConfig`. Pending: cold-boot stress and 24 h bus test.
 
-- [ ] **P1-05 — Determine QoS policy for birth messages.**
+- [x] **P1-05 — Determine QoS policy for birth messages.**
   - Evidence: `src/SparkplugB.cpp:279` (DBIRTH), `:433` (NBIRTH), `:300`
     (NDATA), `:471` (DDATA); LWT already QoS 1 (`src/main.cpp:340`).
   - Change: decide QoS 1 for NBIRTH/DBIRTH (recommended for reliability) and
@@ -290,6 +290,15 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P1-05 (`fix: use QoS 1 for birth messages`)
+
+- NBIRTH/DBIRTH en QoS 1; NDEATH (LWT) en QoS 1.
+- NDATA/DDATA/DDEATH en QoS 0.
+- Política centralizada en `include/SparkplugConfig.h` (`SPB_QOS_*`).
+- Verificado con `mosquitto_sub -q 1`: NBIRTH/DBIRTH/NDEATH QoS 1; NDATA/DDATA/DDEATH QoS 0; retain 0.
+- Documentado que un suscriptor QoS 0 verá los QoS 1 degradados a 0.
+- `firmware.bin` final: 941,689 bytes.
 
 ### 2026-11-04 — P2-01 (`test: add native tests for Modbus decode helpers`)
 

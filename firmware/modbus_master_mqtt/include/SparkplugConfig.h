@@ -39,6 +39,14 @@ constexpr uint16_t SPB_NODE_ALIAS_END       = 6;
 constexpr uint16_t SPB_DEVICE_ALIAS_STEP    = 20;   // deja espacio para futuras metricas
 
 // =================================================================================================
+// MQTT QoS policy
+// =================================================================================================
+constexpr uint8_t SPB_QOS_BIRTH  = 1;  // NBIRTH / DBIRTH: broker PUBACK + esp-mqtt retry
+constexpr uint8_t SPB_QOS_DATA   = 0;  // NDATA / DDATA: telemetry, loss is acceptable
+constexpr uint8_t SPB_QOS_DDEATH = 0;
+constexpr uint8_t SPB_QOS_NDEATH = 1;  // LWT
+
+// =================================================================================================
 // Limits / timing
 // =================================================================================================
 constexpr size_t   SPB_MAX_METRICS        = 24;     // debe coincidir con sparkplug_b.options

@@ -453,7 +453,7 @@ void tareaRed(void *pvParameters) {
                 spb::prepareDeath();
 
                 (void)esp_task_wdt_reset();
-                mqttClient.setWill(spb::deathTopic(), 1, false,
+                mqttClient.setWill(spb::deathTopic(), SPB_QOS_NDEATH, false,
                                    reinterpret_cast<const char*>(spb::deathPayload()),
                                    spb::deathPayloadLen());
                 (void)esp_task_wdt_reset();

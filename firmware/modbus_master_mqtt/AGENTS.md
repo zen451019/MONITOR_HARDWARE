@@ -190,12 +190,20 @@ Topics: `spBv1.0/{group}/{message}/{edgeNode}[/{device}]`.
 
 | Message | QoS | Retain | Notes |
 |---|---:|---|---|
-| NBIRTH | 0 | no | `seq = 0`, must include `bdSeq` and `Node Control/Rebirth=false` |
-| DBIRTH | 0 | no | name + alias + datatype + timestamp + value |
+| NBIRTH | 1 | no | `seq = 0`, must include `bdSeq` and `Node Control/Rebirth=false` |
+| DBIRTH | 1 | no | name + alias + datatype + timestamp + value |
 | NDATA | 0 | no | alias + timestamp + value only (no name/datatype) |
 | DDATA | 0 | no | alias + timestamp + value only |
 | NDEATH | 1 (LWT) | no | `bdSeq` only, **no** `seq` |
 | DDEATH | 0 | no | no metrics, includes `seq` |
+
+QoS policy constants live in `include/SparkplugConfig.h` (`SPB_QOS_BIRTH=1`,
+`SPB_QOS_DATA=0`, `SPB_QOS_DDEATH=0`, `SPB_QOS_NDEATH=1`). QoS 1 is broker-level
+at-least-once delivery: the broker sends PUBACK and esp-mqtt retries while the
+connection is active. Duplicates are possible; consumers dedupe by
+`bdSeq`/`seq`. The firmware marks birth as done when queued, not on PUBACK; a
+reconnect republishes birth. To observe QoS 1, subscribe with QoS 1; a QoS 0
+subscription receives the message downgraded to QoS 0.
 
 Rules enforced by the code:
 
