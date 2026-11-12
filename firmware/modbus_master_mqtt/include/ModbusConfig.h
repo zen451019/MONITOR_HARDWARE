@@ -18,12 +18,17 @@ constexpr unsigned long POLL_INTERVAL_MS     = 30000; // cada 30 s se consulta t
 // =================================================================================================
 // RS485 bus configuration (global, all slaves on the same bus share these parameters)
 // =================================================================================================
+// Hardware notes:
+// - The RS485 transceiver is auto-direction; no DE/RE GPIO is driven.
+// - TX is GPIO12 (MTDI strapping): verify reliable cold boot.
+// - RX is GPIO13, which is SD_CS on ttgo-lora32-v21new: do not use an SD card.
 struct ModbusBusConfig {
     unsigned long baudRate;
     uint32_t      uartConfig;       // SERIAL_8N1, SERIAL_8E1, SERIAL_8O1, etc.
     int           rxPin;
     int           txPin;
     uint32_t      defaultTimeoutMs;
+    int8_t        deRePin;          // -1 = transceptor auto-direccion
 };
 
 const ModbusBusConfig kBusCfg = {
@@ -31,7 +36,8 @@ const ModbusBusConfig kBusCfg = {
     SERIAL_8N1,      // uartConfig
     13,              // rxPin
     12,              // txPin
-    MODBUS_DEFAULT_TIMEOUT_MS // defaultTimeoutMs
+    MODBUS_DEFAULT_TIMEOUT_MS, // defaultTimeoutMs
+    -1               // deRePin (auto-direccion)
 };
 
 // =================================================================================================

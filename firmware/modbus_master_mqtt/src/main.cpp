@@ -560,7 +560,7 @@ void setup() {
 
     modbus_api_init(Serial2, kBusCfg.rxPin, kBusCfg.txPin,
                     kBusCfg.baudRate, kBusCfg.uartConfig,
-                    kBusCfg.defaultTimeoutMs);
+                    kBusCfg.defaultTimeoutMs, kBusCfg.deRePin);
 
     queueMqtt = xQueueCreate(2 * kMaxDevices, sizeof(MeasureFrame));
     if (queueMqtt == nullptr) {

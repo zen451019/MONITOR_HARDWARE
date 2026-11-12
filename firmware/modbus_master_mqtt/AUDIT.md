@@ -125,6 +125,8 @@
   - Change: confirm the schematic (`hardware/modbus_master_MQTT/`), pass the real
     DE/RE pin if needed, and document the pinout.
   - Accept: cold-boot test + 24 h bus test with the documented pins.
+  - Note 2026-11-04: transceiver confirmed auto-direction; `deRePin = -1` is now
+    explicit in `ModbusBusConfig`. Pending: cold-boot stress and 24 h bus test.
 
 - [ ] **P1-05 — Determine QoS policy for birth messages.**
   - Evidence: `src/SparkplugB.cpp:279` (DBIRTH), `:433` (NBIRTH), `:300`

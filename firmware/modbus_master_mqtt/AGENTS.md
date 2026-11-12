@@ -158,7 +158,7 @@ Bus parameters (`include/ModbusConfig.h`):
 | Default timeout | 500 ms (`MODBUS_DEFAULT_TIMEOUT_MS`) |
 | Block gap | 10 ms (`MODBUS_BLOCK_GAP_MS`) |
 | Poll interval | 30000 ms (`POLL_INTERVAL_MS`) |
-| DE/RE pin | `-1` (not configured) |
+| DE/RE pin | `-1` (auto-direction transceiver) |
 
 Worst-case scan: one 4-block device = 4\*500 + 3\*10 = **~2.03 s**;
 8 devices = **~16.3 s**, still below `POLL_INTERVAL_MS`.
@@ -174,9 +174,10 @@ already strips the 0x80 bit from the function code.
 Current device: `medidor_trifasico_1`, slave `1`, alias base `10`, 4 blocks,
 17 Sparkplug metrics.
 
-> **Hardware warning:** GPIO12 is an ESP32 strapping pin (MTDI). It is used as
-> the UART TX pin. Verify the board boots reliably and that the RS485
-> transceiver does/doesn't need an explicit DE/RE pin. Tracked in `AUDIT.md`.
+> **Hardware note:** the RS485 transceiver is auto-direction; `deRePin = -1` and
+> no DE/RE GPIO is driven. TX is GPIO12 (MTDI strapping): verify reliable cold
+> boot. RX is GPIO13, which is `SD_CS` on `ttgo-lora32-v21new`: do not use an SD
+> card. P1-04 stays open until the cold-boot and 24 h bus tests are done.
 
 ---
 
@@ -268,7 +269,8 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
   device per cycle (8 devices ~16.3 s, still below the 30 s poll interval).
 - Both tasks are subscribed to the 5 s TWDT; stack high-water is logged every
   60 s (`STACK_LOG_INTERVAL_MS`).
-- DE/RE pin is not configured; GPIO12 strapping must be verified.
+- Auto-direction transceiver (`deRePin = -1`); GPIO12 strapping and GPIO13
+  (`SD_CS`) still need the P1-04 cold-boot/24 h bus verification.
 - Documentation drift: `TUTORIAL_MODBUS.md` and `SensorRegistry.h` still mention
   the old LoRa/JSON design.
 
