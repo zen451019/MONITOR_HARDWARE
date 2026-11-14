@@ -1,7 +1,7 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-05/P1-06/P1-07/P1-11/P1-12/P2-01/P2-04/P2-05/P2-07/P2-08/P2-09/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-05/P1-06/P1-07/P1-11/P1-12/P2-01/P2-02/P2-03/P2-04/P2-05/P2-07/P2-08/P2-09/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
 > **Baseline:** `firmware.bin` = 941,689 bytes (default partition, fits).
@@ -188,14 +188,14 @@
     `mb_byte` (bounds, endianness, sign).
   - Accept: `pio test -e native` runs in CI or locally.
 
-- [ ] **P2-02 — Add a Sparkplug conformance check to the workflow.**
+- [x] **P2-02 — Add a Sparkplug conformance check to the workflow.**
   - Evidence: `tools/sparkplug/sparkplug_decode.py` already validates seq,
     timestamps, alias/name rules.
   - Change: document the exact command in `AGENTS.md`; optionally add a
     make/ps1 target that starts the decoder against the broker.
   - Accept: a birth/data cycle produces no `[WARN]` output.
 
-- [ ] **P2-03 — Fix documentation drift.**
+- [x] **P2-03 — Fix documentation drift.**
   - Evidence: `TUTORIAL_MODBUS.md:3-9` (still describes `kBlocks`, JSON,
     `tareaMqtt`), `include/SensorRegistry.h:10-11` and `:47-49` (LoRa payload /
     Activate Byte comments).
@@ -290,6 +290,13 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P2-02 + P2-03 (`docs: update Modbus tutorial and Sparkplug verification workflow`)
+
+- `TUTORIAL_MODBUS.md` reescrito para `DevicesConfig.h` + Sparkplug B; sin JSON/LoRa/`tareaMqtt`/`kBlocks`.
+- `SensorRegistry.h` documenta IDs lógicos, no Activate Byte/LoRa.
+- `AGENTS.md` documenta el chequeo rápido con MQTT Viewer (QoS 1) y la conformidad completa con el decoder (sin `[WARN]`).
+- No hay cambios de firmware; build 941,689 bytes.
 
 ### 2026-11-04 — P2-05 (`refactor: deduplicate metric value setters`)
 

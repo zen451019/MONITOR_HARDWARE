@@ -289,8 +289,7 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
   60 s (`STACK_LOG_INTERVAL_MS`).
 - Auto-direction transceiver (`deRePin = -1`); GPIO12 strapping and GPIO13
   (`SD_CS`) still need the P1-04 cold-boot/24 h bus verification.
-- Documentation drift: `TUTORIAL_MODBUS.md` and `SensorRegistry.h` still mention
-  the old LoRa/JSON design.
+
 
 ---
 
@@ -313,8 +312,11 @@ See `AUDIT.md` for evidence, priority, and acceptance criteria. Highlights:
 
 - Build with the full `pio.exe` path; fix warnings you introduce.
 - Run `& $pio test -e native` after changing `include/ModbusDecode.h` or its tests.
-- If you touch Sparkplug payloads, run the decoder/validator:
-  `python tools/sparkplug/sparkplug_decode.py --host <broker>`.
+- If you touch Sparkplug payloads, do a quick topic/QoS/retain check in MQTT
+  Viewer (subscribe at QoS 1) and run the full decoder/validator:
+  `python tools/sparkplug/sparkplug_decode.py --host <broker>`. No `[WARN]`.
+- MQTT Viewer must subscribe at QoS 1 to observe QoS 1; a QoS 0 subscription
+  shows those messages as QoS 0.
 - Check that a new metric has a unique alias and a matching `SpbMetricDef`.
 - Check that `SPB_MAX_METRICS` still matches `sparkplug_b.options`.
 - Update `AUDIT.md` checkboxes and this file if the change invalidates a section.
