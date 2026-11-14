@@ -102,12 +102,8 @@ void metricSetBool(Metric& m, bool value) {
     m.value.boolean_value = value;
 }
 
-void metricSetInt32(Metric& m, int32_t value) {
-    m.has_is_null = true;
-    m.is_null = false;
-    m.which_value = org_eclipse_tahu_protobuf_Payload_Metric_int_value_tag;
-    m.value.int_value = (uint32_t)value;
-}
+// nanopb stores int_value/long_value as unsigned. The Sparkplug datatype
+// (SPB_DT_INT*/UINT*) carries the sign; the stored bit pattern is the same.
 
 void metricSetUInt32(Metric& m, uint32_t value) {
     m.has_is_null = true;
@@ -116,11 +112,8 @@ void metricSetUInt32(Metric& m, uint32_t value) {
     m.value.int_value = value;
 }
 
-void metricSetInt64(Metric& m, int64_t value) {
-    m.has_is_null = true;
-    m.is_null = false;
-    m.which_value = org_eclipse_tahu_protobuf_Payload_Metric_long_value_tag;
-    m.value.long_value = (uint64_t)value;
+void metricSetInt32(Metric& m, int32_t value) {
+    metricSetUInt32(m, static_cast<uint32_t>(value));
 }
 
 void metricSetUInt64(Metric& m, uint64_t value) {
@@ -128,6 +121,10 @@ void metricSetUInt64(Metric& m, uint64_t value) {
     m.is_null = false;
     m.which_value = org_eclipse_tahu_protobuf_Payload_Metric_long_value_tag;
     m.value.long_value = value;
+}
+
+void metricSetInt64(Metric& m, int64_t value) {
+    metricSetUInt64(m, static_cast<uint64_t>(value));
 }
 
 size_t encodeToBuffer(uint8_t* buf, size_t cap, const Payload& payload) {

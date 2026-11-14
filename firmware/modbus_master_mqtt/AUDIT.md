@@ -1,7 +1,7 @@
 # AUDIT & CHANGE BACKLOG — modbus_master_mqtt
 
 > Living document: findings plus the concrete changes to execute.
-> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-05/P1-06/P1-07/P1-11/P1-12/P2-01/P2-04/P2-07/P2-08/P2-09/P2-10 implementados; resto pendiente.
+> **Status:** Fase 0 + P0-01/P0-02/P0-03/P0-04/P0-05/P0-06/P1-03/P1-05/P1-06/P1-07/P1-11/P1-12/P2-01/P2-04/P2-05/P2-07/P2-08/P2-09/P2-10 implementados; resto pendiente.
 > **Date:** 2026-11-03 (actualizado 2026-11-04)
 > **Scope:** `firmware/modbus_master_mqtt` only.
 > **Baseline:** `firmware.bin` = 941,689 bytes (default partition, fits).
@@ -210,7 +210,7 @@
   - Change: add bounds checks or `static_assert` on the worst case.
   - Accept: no behavioral change; overflow impossible by construction.
 
-- [ ] **P2-05 — Consolidate duplicated metric setters.**
+- [x] **P2-05 — Consolidate duplicated metric setters.**
   - Evidence: `src/SparkplugB.cpp:103-129` (Int32/UInt32 and Int64/UInt64 are
     identical).
   - Change: keep distinct names but document that the protobuf field is unsigned
@@ -290,6 +290,13 @@
 ---
 
 ## 6. Done
+
+### 2026-11-04 — P2-05 (`refactor: deduplicate metric value setters`)
+
+- `metricSetInt32`/`metricSetInt64` ahora son envoltorios de las versiones unsigned.
+- Una sola implementación por ancho (32/64); mismos nombres públicos y mismo wire output.
+- Documentado que nanopb guarda los valores como unsigned y el datatype lleva el signo.
+- Build limpio, 941,689 bytes; tests nativos 10/10.
 
 ### 2026-11-04 — P1-06 + P2-09 (`docs: add netconfig example and document MQTT security`)
 
