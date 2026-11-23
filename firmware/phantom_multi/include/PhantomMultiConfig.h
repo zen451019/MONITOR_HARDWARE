@@ -1,0 +1,54 @@
+#ifndef PHANTOM_MULTI_CONFIG_H
+#define PHANTOM_MULTI_CONFIG_H
+
+#include <cstddef>
+#include <cstdint>
+
+#include "SensorRegistry.h"
+
+#ifndef PHANTOM_DEVICE_INTERVAL_MS
+#define PHANTOM_DEVICE_INTERVAL_MS 60000UL
+#endif
+
+#ifndef PHANTOM_INTERVAL_JITTER_MS
+#define PHANTOM_INTERVAL_JITTER_MS 5000UL
+#endif
+
+#ifndef PHANTOM_LOG_EVERY_N
+#define PHANTOM_LOG_EVERY_N 50
+#endif
+
+constexpr uint8_t LORAWAN_SUB_BAND = 8;
+constexpr uint8_t FPORT_DATA = 1;
+constexpr uint8_t LORAWAN_DATARATE = 3;
+constexpr int8_t LORAWAN_TX_POWER_DBM = 20;
+constexpr size_t LORA_PAYLOAD_MAX = 220;
+
+constexpr uint32_t PHANTOM_TIMESTAMP_BASE = 1767225600UL;
+
+constexpr float SIM_NOMINAL_FREQ = 60.0f;
+constexpr float SIM_FREQ_NORMAL_MIN = 59.5f;
+constexpr float SIM_FREQ_NORMAL_MAX = 60.5f;
+constexpr float SIM_CURRENT_ALERT = 20.0f;
+
+constexpr float PHANTOM_VOLTAGE_NOMINAL = 120.0f;
+constexpr float PHANTOM_VOLTAGE_PHASE_SPREAD = 2.0f;
+constexpr float PHANTOM_VOLTAGE_WALK = 4.0f;
+constexpr float PHANTOM_VOLTAGE_STEP = 0.20f;
+constexpr float PHANTOM_VOLTAGE_INITIAL_SPREAD = 0.4f;
+
+constexpr float PHANTOM_VOLTAGE_NORMAL_MIN = PHANTOM_VOLTAGE_NOMINAL * 0.95f;
+constexpr float PHANTOM_VOLTAGE_NORMAL_MAX = PHANTOM_VOLTAGE_NOMINAL * 1.05f;
+constexpr float PHANTOM_VOLTAGE_SAG_MIN = PHANTOM_VOLTAGE_NOMINAL * 0.80f;
+constexpr float PHANTOM_VOLTAGE_SAG_MAX = PHANTOM_VOLTAGE_NOMINAL * 0.89f;
+constexpr float PHANTOM_VOLTAGE_SWELL_MIN = PHANTOM_VOLTAGE_NOMINAL * 1.11f;
+constexpr float PHANTOM_VOLTAGE_SWELL_MAX = PHANTOM_VOLTAGE_NOMINAL * 1.20f;
+constexpr float PHANTOM_VOLTAGE_OVERLOAD_MIN = PHANTOM_VOLTAGE_NOMINAL * 0.95f;
+constexpr float PHANTOM_VOLTAGE_OVERLOAD_MAX = PHANTOM_VOLTAGE_NOMINAL * 1.00f;
+
+constexpr int SIM_FAULT_INTERVAL_MIN = 8;
+constexpr int SIM_FAULT_INTERVAL_MAX = 15;
+constexpr int SIM_FAULT_MIN_CYCLES = 1;
+constexpr int SIM_FAULT_MAX_CYCLES = 3;
+
+#endif // PHANTOM_MULTI_CONFIG_H

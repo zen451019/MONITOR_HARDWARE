@@ -1,0 +1,5 @@
+.pio
+.vscode/
+include/MultiDeviceConfig.h
+tools/out/
+__pycache__/
